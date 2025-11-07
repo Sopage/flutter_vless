@@ -9,10 +9,10 @@ A Flutter plugin that provides VLESS functionality for macOS.
   s.license          = { :type => 'MIT', :file => '../LICENSE' }
   s.author           = { 'Your Company' => 'email@example.com' }
 
-  # podspec находится в macos/, поэтому путь к корню — на уровень выше
+
   s.source = { :path => '..' }
 
-  # теперь путь указываем без macos/, т.к. podspec уже внутри этой папки
+
   s.source_files = 'Classes/**/*.swift'
 
   s.dependency 'FlutterMacOS'
