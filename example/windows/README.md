@@ -1,0 +1,65 @@
+# Windows Example Setup
+
+This directory contains the Windows-specific files for the flutter_vless example app.
+
+## Xray Setup
+
+Before running the example on Windows, you need to provide the Xray executable:
+
+1. **Download Xray-core** (version 25.10.15 or later):
+   - Visit: https://github.com/XTLS/Xray-core/releases
+   - Download `Xray-windows-64.zip` (or `Xray-windows-32.zip` for 32-bit systems)
+
+2. **Extract and place xray.exe**:
+   - Extract the downloaded archive
+   - Locate `xray.exe` in the extracted files
+   - Copy `xray.exe` to: `example/windows/xray/xray.exe`
+   - Delete the placeholder file: `<xray_paste_here.exe.txt>`
+
+3. **Verify the structure**:
+   ```
+   example/
+     windows/
+       xray/
+         xray.exe  ← Should be here
+   ```
+
+## Running the Example
+
+Once xray.exe is in place, you can run the example:
+
+```bash
+cd example
+flutter run -d windows
+```
+
+Or build the Windows app:
+
+```bash
+cd example
+flutter build windows
+```
+
+## Notes
+
+- The plugin will automatically detect xray.exe in the `windows/xray/` directory
+- If xray.exe is not found, the app will show an error message
+- Make sure xray.exe has execute permissions
+- The plugin will create temporary configuration files automatically
+
+## Troubleshooting
+
+**xray.exe not found:**
+- Verify the file is named exactly `xray.exe` (not `xray.exe.exe`)
+- Check that the file is in `example/windows/xray/` directory
+- Ensure the file is not corrupted (try downloading again)
+
+**Permission errors:**
+- Run the app as Administrator if needed
+- Check Windows Defender or antivirus isn't blocking xray.exe
+
+**Connection issues:**
+- Verify your Xray configuration is valid JSON
+- Check that the server address and port are correct
+- Ensure your firewall allows the connection
+

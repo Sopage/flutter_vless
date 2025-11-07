@@ -1,11 +1,11 @@
 # flutter_vless
 ![Pub Version](https://img.shields.io/pub/v/flutter_vless.svg) 
 
-**Flutter plugin to run VLESS/VMESS as a local proxy and VPN on Android and iOS. V2Ray/Xray core. Shadowsocks, Trojan, Socks 5 support.**
+**Flutter plugin to run VLESS/VMESS as a local proxy and VPN on Android, iOS, macOS, and Windows. V2Ray/Xray core. Shadowsocks, Trojan, Socks 5 support.**
 
 ⚡️ Provides fine-grained routing for domains, sites, and apps, with built-in status tracking, delay testing, and extended configuration options.
 
->  In contrast to similar plugins, we provide both __iOS__ and __Android__ versions out of the box and for free, with the package being fully open-source.
+>  In contrast to similar plugins, we provide __iOS__, __macOS__, __Android__, and __Windows__ versions out of the box and for free, with the package being fully open-source.
 
 > Make sure to give a like on pub.dev and star on GitHub if this package was useful for you <3
 
@@ -17,7 +17,9 @@
 - [Installation](#installation)
 - [Platform setup (step-by-step)](#platform-setup-step-by-step)
   - [iOS](#ios)
+  - [macOS](#macos)
   - [Android](#android)
+  - [Windows](#windows)
 - [Usage examples](#usage-examples)
   - [URL parser](#url-parser-)
   - [Edit configuration](#edit-configuration)
@@ -28,8 +30,8 @@
 ---
 
 ## Key features
-- Supports iOS and Android out of the box, with routing and similar features available
-- Run flutter_vless as a local proxy or using the VPN mode (Network Extension / VpnService).
+- Supports iOS, macOS, Android, and Windows out of the box, with routing and similar features available
+- Run flutter_vless as a local proxy or using the VPN mode (Network Extension / VpnService / TUN/TAP).
 - Parse VLESS/VMESS share links and generate ready-to-run configurations.
 - Measure server delay (ping) for a configuration.
 - Edit configuration (ports, DNS, routing, etc.).
@@ -111,6 +113,7 @@ class _MyAppState extends State<MyApp> {
 - Flutter SDK (the minimum supported version used by the package).
 - Android: recommended `minSdkVersion` >= 23; set `targetSdkVersion` to a recent API.
 - iOS: `iOS Deployment Target` >= 15.0 (may vary depending on Network Extension usage).
+- Windows: Windows 10 or later. Admin rights may be required for full VPN mode (TUN/TAP interface).
 - Running VPN mode on iOS requires Network Extension and a provisioning profile that allows it.
 
 ---
@@ -155,7 +158,30 @@ flutter pub get
 Follow the platform steps below — without these the plugin cannot run VPN/Network Extension.
 
 ### iOS
-[Setup for IOS](./IOS_SETUP.md)
+
+See [IOS_SETUP.md](./IOS_SETUP.md) for detailed iOS setup instructions.
+
+### macOS
+
+See [MACOS_SETUP.md](./MACOS_SETUP.md) for detailed macOS setup instructions.
+
+**Quick setup:**
+1. Download Xray-core binary (modern approach, recommended):
+   ```bash
+   ./scripts/download_xray_macos.sh
+   ```
+2. Follow the setup instructions in [MACOS_SETUP.md](./MACOS_SETUP.md)
+3. For detailed Xray setup, see [MACOS_XRAY_SETUP.md](./MACOS_XRAY_SETUP.md)
+
+**Note**: 
+- Uses **Xray-core v25.10.15+** binary directly (modern 2025 approach)
+- No need for outdated xray-mobile framework
+- Same approach as Windows version for consistency
+
+### Windows
+[Setup for Windows](./WINDOWS_SETUP.md)
+
+**Important**: Windows support requires Xray-core (version 25.10.15 or later). See [XRAY_SETUP.md](./windows/XRAY_SETUP.md) for installation instructions.
 
 ### Android
 
