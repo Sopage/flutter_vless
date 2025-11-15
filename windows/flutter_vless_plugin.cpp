@@ -1,6 +1,8 @@
 #include "include/flutter_vless/flutter_vless_plugin.h"
 
 #include <flutter/method_channel.h>
+#include <flutter/event_channel.h>
+#include <flutter/event_stream_handler_functions.h>
 #include <flutter/plugin_registrar_windows.h>
 #include <flutter/standard_method_codec.h>
 #include <windows.h>
@@ -71,7 +73,7 @@ FlutterVlessPlugin::FlutterVlessPlugin(flutter::PluginRegistrarWindows *registra
           &flutter::StandardMethodCodec::GetInstance());
 
   auto status_handler = std::make_unique<
-      flutter::StreamHandler<flutter::EncodableValue>>(
+      flutter::StreamHandlerFunctions<flutter::EncodableValue>>(
       [this](const flutter::EncodableValue *arguments,
              std::unique_ptr<flutter::EventSink<flutter::EncodableValue>> &&events)
           -> std::unique_ptr<flutter::StreamHandlerError<flutter::EncodableValue>> {
@@ -258,11 +260,22 @@ void FlutterVlessPlugin::UpdateStatus() {
 
 }  // namespace
 
-// C API entry point
-extern "C" __declspec(dllexport) void FlutterVlessPluginRegisterWithRegistrar(
-    FlutterDesktopPluginRegistrarRef registrar) {
+// C++ registration entry point called by the generated plugin registrant.
+void FlutterVlessPluginRegisterWithRegistrar(
+  flutter::PluginRegistrar* registrar) {
+  // The generated registrant passes a generic flutter::PluginRegistrar*.
+  // Cast to the Windows-specific registrar and forward to the plugin
+  // registration method.
   FlutterVlessPlugin::RegisterWithRegistrar(
-      flutter::PluginRegistrarManager::GetInstance()
-          ->GetRegistrar<flutter::PluginRegistrarWindows>(registrar));
+    reinterpret_cast<flutter::PluginRegistrarWindows*>(registrar));
+}
+
+// Also provide the C-style registrar overload (used by some Flutter toolchains)
+// to support builds that pass a FlutterDesktopPluginRegistrarRef.
+void FlutterVlessPluginRegisterWithRegistrar(
+  FlutterDesktopPluginRegistrarRef registrar) {
+  FlutterVlessPlugin::RegisterWithRegistrar(
+    flutter::PluginRegistrarManager::GetInstance()
+      ->GetRegistrar<flutter::PluginRegistrarWindows>(registrar));
 }
 

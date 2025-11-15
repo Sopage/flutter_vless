@@ -11,6 +11,7 @@
 #include <chrono>
 #include <future>
 #include <map>
+#include <windows.h>
 
 namespace fs = std::filesystem;
 

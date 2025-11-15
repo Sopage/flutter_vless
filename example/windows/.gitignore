@@ -1,5 +1,7 @@
 flutter/ephemeral/
 
+xray/xray.exe
+
 # Visual Studio user-specific files.
 *.suo
 *.user

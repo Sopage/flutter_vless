@@ -193,10 +193,12 @@ bool V2rayManager::StartXrayProcess(const std::string& config_path) {
   si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
   
   std::string command_line = "\"" + xray_executable_path_.string() + "\" -config \"" + config_path + "\"";
+  std::vector<char> cmd_buffer(command_line.begin(), command_line.end());
+  cmd_buffer.push_back('\0');
   
   BOOL success = CreateProcessA(
     nullptr,
-    const_cast<char*>(command_line.c_str()),
+    cmd_buffer.data(),
     nullptr,
     nullptr,
     TRUE,
