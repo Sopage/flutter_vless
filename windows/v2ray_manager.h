@@ -11,7 +11,7 @@
 #include <chrono>
 #include <future>
 #include <map>
-#include <windows.h>
+#include <cstdint>
 
 namespace fs = std::filesystem;
 
@@ -51,6 +51,12 @@ class V2rayManager {
   bool InitializeApiClient();
   void UpdateTrafficStats();
   int MeasureDelayViaApi(const std::string& url);
+  // Port helpers
+  bool IsPortFree(uint16_t port);
+  uint16_t FindFreePort();
+  bool ReplacePortsInConfigFile(const fs::path& config_path);
+  // Try to detect Xray API listen address ("address" + "port" or single "port")
+  std::optional<std::string> DetectApiAddressInConfig(const fs::path& config_path);
   
   // Helper methods
   std::optional<fs::path> FindXrayExecutable();
@@ -81,33 +87,26 @@ class V2rayManager {
 };
 
 // Process handle wrapper for xray.exe
+// The concrete Windows HANDLE/PROCESS_INFORMATION usage is implemented
+// in the .cpp file to avoid pulling <windows.h> (and transitively
+// winsock headers) into public headers which breaks include ordering
+// in some translation units.
 struct ProcessHandle {
-  HANDLE hProcess = INVALID_HANDLE_VALUE;
-  HANDLE hThread = INVALID_HANDLE_VALUE;
-  PROCESS_INFORMATION pi = {};
-  
-  ~ProcessHandle() {
-    Close();
-  }
-  
-  void Close() {
-    if (pi.hProcess != INVALID_HANDLE_VALUE) {
-      TerminateProcess(pi.hProcess, 0);
-      CloseHandle(pi.hProcess);
-      CloseHandle(pi.hThread);
-      pi.hProcess = INVALID_HANDLE_VALUE;
-      pi.hThread = INVALID_HANDLE_VALUE;
-    }
-  }
-  
-  bool IsRunning() const {
-    if (pi.hProcess == INVALID_HANDLE_VALUE) return false;
-    DWORD exit_code;
-    if (GetExitCodeProcess(pi.hProcess, &exit_code)) {
-      return exit_code == STILL_ACTIVE;
-    }
-    return false;
-  }
+  // Opaque handles stored as integer-sized values to avoid windows types
+  std::uintptr_t hProcess = 0;
+  std::uintptr_t hThread = 0;
+  // Pipe handles for capturing stdout/stderr of the child process.
+  std::uintptr_t hStdOutRead = 0;
+  std::uintptr_t hStdErrRead = 0;
+
+  ProcessHandle();
+  ~ProcessHandle();
+
+  // Close the process and handles. Implemented in .cpp.
+  void Close();
+
+  // Query whether the child process is still running.
+  bool IsRunning() const;
 };
 
 // API client for Xray stats and delay measurement

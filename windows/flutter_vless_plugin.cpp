@@ -12,6 +12,8 @@
 #include <chrono>
 #include <atomic>
 #include <mutex>
+#include <functional>
+#include <vector>
 
 #include "v2ray_manager.h"
 
@@ -46,6 +48,11 @@ class FlutterVlessPlugin : public flutter::Plugin {
   int64_t total_download_ = 0;
   int64_t upload_speed_ = 0;
   int64_t download_speed_ = 0;
+  // UI thread invocation helpers
+  HWND main_window_handle_ = nullptr;
+  int window_proc_delegate_id_ = 0;
+  std::mutex ui_callbacks_mutex_;
+  std::vector<std::function<void()>> ui_callbacks_;
 };
 
 void FlutterVlessPlugin::RegisterWithRegistrar(
@@ -87,12 +94,50 @@ FlutterVlessPlugin::FlutterVlessPlugin(flutter::PluginRegistrarWindows *registra
       });
 
   status_channel_->SetStreamHandler(std::move(status_handler));
+
+  // Setup UI invocation mechanism: register a window proc delegate that will
+  // run queued callbacks on the UI thread. This avoids depending on
+  // registrar->GetTaskRunner which is not available in all embedder versions.
+  if (registrar_) {
+    if (registrar_->GetView()) {
+      main_window_handle_ = registrar_->GetView()->GetNativeWindow();
+    }
+    // Use RegisterTopLevelWindowProcDelegate to be invoked from the window
+    // procedure on the UI thread. The delegate will run all queued callbacks
+    // when it receives our custom message.
+    UINT message_id = RegisterWindowMessageA("FLUTTER_VLESS_INVOKE_UI_CALLBACK");
+    window_proc_delegate_id_ = registrar_->RegisterTopLevelWindowProcDelegate(
+        [this, message_id](HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
+            -> std::optional<LRESULT> {
+          if (message == message_id) {
+            std::vector<std::function<void()>> tasks;
+            {
+              std::lock_guard<std::mutex> lock(ui_callbacks_mutex_);
+              tasks.swap(ui_callbacks_);
+            }
+            for (auto &t : tasks) {
+              try {
+                t();
+              } catch (...) {
+                // swallow exceptions to avoid crashing UI thread
+              }
+            }
+            return std::optional<LRESULT>(0);
+          }
+          return std::nullopt;
+        });
+  }
 }
 
 FlutterVlessPlugin::~FlutterVlessPlugin() {
   StopStatusTimer();
   if (v2ray_manager_) {
     v2ray_manager_->Stop();
+  }
+  // Unregister window proc delegate
+  if (registrar_ && window_proc_delegate_id_ != 0) {
+    registrar_->UnregisterTopLevelWindowProcDelegate(window_proc_delegate_id_);
+    window_proc_delegate_id_ = 0;
   }
 }
 
@@ -164,7 +209,38 @@ void FlutterVlessPlugin::HandleMethodCall(
       status.push_back(flutter::EncodableValue("0"));
       status.push_back(flutter::EncodableValue("0"));
       status.push_back(flutter::EncodableValue("DISCONNECTED"));
-      status_sink_->Success(flutter::EncodableValue(status));
+
+      // Queue the status to run on UI thread via our window-proc delegate.
+      {
+        std::lock_guard<std::mutex> lock(ui_callbacks_mutex_);
+        ui_callbacks_.push_back([this, status]() mutable {
+          if (status_sink_) {
+            status_sink_->Success(flutter::EncodableValue(status));
+          }
+        });
+      }
+      {
+        std::lock_guard<std::mutex> ui_lock(ui_callbacks_mutex_);
+        ui_callbacks_.push_back([this, status]() mutable {
+          if (status_sink_) {
+            status_sink_->Success(flutter::EncodableValue(status));
+          }
+        });
+      }
+      if (main_window_handle_) {
+        UINT message_id = RegisterWindowMessageA("FLUTTER_VLESS_INVOKE_UI_CALLBACK");
+        PostMessage(main_window_handle_, message_id, 0, 0);
+      } else {
+        // Fallback: call directly (may produce non-platform thread warning on
+        // some embedder versions, but we'll try to avoid that by using the
+        // delegate when possible).
+        std::lock_guard<std::mutex> ui_lock(ui_callbacks_mutex_);
+        auto tasks = std::move(ui_callbacks_);
+        ui_callbacks_.clear();
+        for (auto &t : tasks) {
+          t();
+        }
+      }
     }
     
     result->Success(flutter::EncodableValue(nullptr));
@@ -231,7 +307,7 @@ void FlutterVlessPlugin::UpdateStatus() {
     return;
   }
 
-  std::lock_guard<std::mutex> lock(status_mutex_);
+  std::lock_guard<std::mutex> status_lock(status_mutex_);
   
   auto now = std::chrono::steady_clock::now();
   auto duration = std::chrono::duration_cast<std::chrono::seconds>(
@@ -255,7 +331,37 @@ void FlutterVlessPlugin::UpdateStatus() {
   status.push_back(flutter::EncodableValue(std::to_string(total_download_)));
   status.push_back(flutter::EncodableValue("CONNECTED"));
 
-  status_sink_->Success(flutter::EncodableValue(status));
+  // Queue the status and post to UI thread via our delegate.
+  {
+    std::lock_guard<std::mutex> lock(ui_callbacks_mutex_);
+    ui_callbacks_.push_back([this, status]() mutable {
+      if (status_sink_) {
+        status_sink_->Success(flutter::EncodableValue(status));
+      }
+    });
+  }
+      {
+        std::lock_guard<std::mutex> ui_lock(ui_callbacks_mutex_);
+        ui_callbacks_.push_back([this, status]() mutable {
+          if (status_sink_) {
+            status_sink_->Success(flutter::EncodableValue(status));
+          }
+        });
+      }
+  if (main_window_handle_) {
+    UINT message_id = RegisterWindowMessageA("FLUTTER_VLESS_INVOKE_UI_CALLBACK");
+    PostMessage(main_window_handle_, message_id, 0, 0);
+  } else {
+    // Fallback: run callbacks directly.
+    std::vector<std::function<void()>> tasks;
+    {
+      std::lock_guard<std::mutex> ui_lock(ui_callbacks_mutex_);
+      tasks.swap(ui_callbacks_);
+    }
+    for (auto &t : tasks) {
+      t();
+    }
+  }
 }
 
 }  // namespace

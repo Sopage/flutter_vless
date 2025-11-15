@@ -3,15 +3,21 @@
 #include <fstream>
 #include <sstream>
 #include <chrono>
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <windows.h>
 #include <wininet.h>
 #include <process.h>
 #include <shlwapi.h>
 #include <shlobj.h>
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <algorithm>
 #include <regex>
 #include <map>
 #include <vector>
+
+#pragma comment(lib, "Ws2_32.lib")
 
 #pragma comment(lib, "wininet.lib")
 #pragma comment(lib, "shlwapi.lib")
@@ -63,6 +69,51 @@ namespace json_utils {
     }
     return "";
   }
+}
+
+// Implement ProcessHandle methods declared in the header. Keep Windows
+// types and functions in this translation unit only.
+ProcessHandle::ProcessHandle() = default;
+
+ProcessHandle::~ProcessHandle() {
+  Close();
+}
+
+void ProcessHandle::Close() {
+  if (hProcess != 0) {
+    HANDLE hp = reinterpret_cast<HANDLE>(hProcess);
+    if (hp != INVALID_HANDLE_VALUE) {
+      TerminateProcess(hp, 0);
+      CloseHandle(hp);
+    }
+    if (hThread != 0) {
+      HANDLE ht = reinterpret_cast<HANDLE>(hThread);
+      if (ht != INVALID_HANDLE_VALUE) CloseHandle(ht);
+    }
+    hProcess = 0;
+    hThread = 0;
+  }
+  if (hStdOutRead != 0) {
+    HANDLE hr = reinterpret_cast<HANDLE>(hStdOutRead);
+    if (hr != INVALID_HANDLE_VALUE) CloseHandle(hr);
+    hStdOutRead = 0;
+  }
+  if (hStdErrRead != 0) {
+    HANDLE he = reinterpret_cast<HANDLE>(hStdErrRead);
+    if (he != INVALID_HANDLE_VALUE) CloseHandle(he);
+    hStdErrRead = 0;
+  }
+}
+
+bool ProcessHandle::IsRunning() const {
+  if (hProcess == 0) return false;
+  HANDLE hp = reinterpret_cast<HANDLE>(hProcess);
+  if (hp == INVALID_HANDLE_VALUE) return false;
+  DWORD exit_code = 0;
+  if (GetExitCodeProcess(hp, &exit_code)) {
+    return exit_code == STILL_ACTIVE;
+  }
+  return false;
 }
 
 V2rayManager::V2rayManager() {
@@ -178,24 +229,64 @@ bool V2rayManager::StartXrayProcess(const std::string& config_path) {
   if (xray_executable_path_.empty() || !fs::exists(xray_executable_path_)) {
     return false;
   }
+
+  // Before starting Xray, try to replace any configured ports that are already in use.
+  try {
+    ReplacePortsInConfigFile(fs::path(config_path));
+    // Attempt to detect API address from the (possibly modified) config and
+    // update our api_address_ so InitializeApiClient can connect to the right
+    // endpoint.
+    if (auto detected = DetectApiAddressInConfig(fs::path(config_path))) {
+      api_address_ = *detected;
+      std::cerr << "Detected Xray API address: " << api_address_ << std::endl;
+    }
+  } catch (...) {
+    // Ignore failures here; we'll try to start the process and capture its output.
+  }
   
   xray_process_ = std::make_unique<ProcessHandle>();
   
   STARTUPINFOA si = {};
   si.cb = sizeof(si);
   si.dwFlags = STARTF_USESTDHANDLES;
-  
-  // Create pipes for stdout/stderr if needed
-  HANDLE hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
-  HANDLE hStdErr = GetStdHandle(STD_ERROR_HANDLE);
-  si.hStdOutput = hStdOut;
-  si.hStdError = hStdErr;
+
+  // Create pipes for stdout/stderr so we can capture Xray logs.
+  SECURITY_ATTRIBUTES saAttr;
+  saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
+  saAttr.bInheritHandle = TRUE;
+  saAttr.lpSecurityDescriptor = NULL;
+
+  HANDLE hChildStdOutRead = INVALID_HANDLE_VALUE;
+  HANDLE hChildStdOutWrite = INVALID_HANDLE_VALUE;
+  HANDLE hChildStdErrRead = INVALID_HANDLE_VALUE;
+  HANDLE hChildStdErrWrite = INVALID_HANDLE_VALUE;
+
+  if (!CreatePipe(&hChildStdOutRead, &hChildStdOutWrite, &saAttr, 0)) {
+    std::cerr << "Failed to create stdout pipe" << std::endl;
+  } else {
+    // Ensure the read handle is not inherited.
+    SetHandleInformation(hChildStdOutRead, HANDLE_FLAG_INHERIT, 0);
+  }
+
+  if (!CreatePipe(&hChildStdErrRead, &hChildStdErrWrite, &saAttr, 0)) {
+    std::cerr << "Failed to create stderr pipe" << std::endl;
+  } else {
+    SetHandleInformation(hChildStdErrRead, HANDLE_FLAG_INHERIT, 0);
+  }
+
+  // Parent will read from the read ends; child inherits the write ends.
+  si.hStdOutput = hChildStdOutWrite != INVALID_HANDLE_VALUE ? hChildStdOutWrite : GetStdHandle(STD_OUTPUT_HANDLE);
+  si.hStdError = hChildStdErrWrite != INVALID_HANDLE_VALUE ? hChildStdErrWrite : GetStdHandle(STD_ERROR_HANDLE);
   si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
   
   std::string command_line = "\"" + xray_executable_path_.string() + "\" -config \"" + config_path + "\"";
   std::vector<char> cmd_buffer(command_line.begin(), command_line.end());
   cmd_buffer.push_back('\0');
   
+  // Use a local PROCESS_INFORMATION and move the handles into our
+  // ProcessHandle wrapper to avoid exposing PROCESS_INFORMATION in the
+  // public header.
+  PROCESS_INFORMATION pi = {};
   BOOL success = CreateProcessA(
     nullptr,
     cmd_buffer.data(),
@@ -206,16 +297,377 @@ bool V2rayManager::StartXrayProcess(const std::string& config_path) {
     nullptr,
     xray_executable_path_.parent_path().string().c_str(),
     &si,
-    &xray_process_->pi
+    &pi
   );
   
   if (!success) {
     DWORD error = GetLastError();
     std::cerr << "Failed to start Xray process. Error: " << error << std::endl;
+    // Clean up pipe handles we created
+    if (hChildStdOutRead != INVALID_HANDLE_VALUE) CloseHandle(hChildStdOutRead);
+    if (hChildStdOutWrite != INVALID_HANDLE_VALUE) CloseHandle(hChildStdOutWrite);
+    if (hChildStdErrRead != INVALID_HANDLE_VALUE) CloseHandle(hChildStdErrRead);
+    if (hChildStdErrWrite != INVALID_HANDLE_VALUE) CloseHandle(hChildStdErrWrite);
     xray_process_.reset();
     return false;
   }
-  
+  // Close the write ends in the parent process - the child has inherited them.
+  if (hChildStdOutWrite != INVALID_HANDLE_VALUE) {
+    CloseHandle(hChildStdOutWrite);
+    hChildStdOutWrite = INVALID_HANDLE_VALUE;
+  }
+  if (hChildStdErrWrite != INVALID_HANDLE_VALUE) {
+    CloseHandle(hChildStdErrWrite);
+    hChildStdErrWrite = INVALID_HANDLE_VALUE;
+  }
+
+  // Move process handles into our opaque ProcessHandle wrapper.
+  xray_process_->hProcess = reinterpret_cast<std::uintptr_t>(pi.hProcess);
+  xray_process_->hThread = reinterpret_cast<std::uintptr_t>(pi.hThread);
+
+  // Store read handles so they can be closed when stopping.
+  xray_process_->hStdOutRead = reinterpret_cast<std::uintptr_t>(hChildStdOutRead);
+  xray_process_->hStdErrRead = reinterpret_cast<std::uintptr_t>(hChildStdErrRead);
+
+  // Start threads to capture stdout and stderr. Pass uintptr_t and cast inside
+  // so this TU uses real HANDLE types but the header stays windows-free.
+  auto reader = [](std::uintptr_t readHandlePtr, const char* label) {
+    HANDLE readHandle = reinterpret_cast<HANDLE>(readHandlePtr);
+    if (readHandle == INVALID_HANDLE_VALUE || readHandle == nullptr) return;
+    const DWORD bufSize = 4096;
+    std::vector<char> buffer(bufSize + 1);
+    DWORD bytesRead = 0;
+    while (true) {
+      BOOL result = ReadFile(readHandle, buffer.data(), bufSize, &bytesRead, nullptr);
+      if (!result || bytesRead == 0) break;
+      buffer[bytesRead] = '\0';
+      // Print to stderr with label
+      std::cerr << "[Xray " << label << "] " << buffer.data();
+    }
+    CloseHandle(readHandle);
+  };
+
+  // Detach threads to continue independently
+  if (xray_process_->hStdOutRead != 0) {
+    std::thread(reader, xray_process_->hStdOutRead, "stdout").detach();
+    // The reader will close the handle when finished; clear local copy to avoid double-close
+    xray_process_->hStdOutRead = 0;
+  }
+  if (xray_process_->hStdErrRead != 0) {
+    std::thread(reader, xray_process_->hStdErrRead, "stderr").detach();
+    xray_process_->hStdErrRead = 0;
+  }
+
+  // Give the process a short moment to fail early (for example, due to port bind errors).
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  // If the process is no longer running, treat as an immediate failure and
+  // capture a best-effort exit code for diagnostics.
+  if (!xray_process_->IsRunning()) {
+    DWORD exit_code = 0;
+    HANDLE hp = reinterpret_cast<HANDLE>(xray_process_->hProcess);
+    if (hp != nullptr && hp != INVALID_HANDLE_VALUE && GetExitCodeProcess(hp, &exit_code)) {
+      std::cerr << "Xray process exited immediately with code: " << exit_code << std::endl;
+    } else {
+      std::cerr << "Xray process exited immediately" << std::endl;
+    }
+    // Clean up handles and process
+    xray_process_->Close();
+    xray_process_.reset();
+    return false;
+  }
+
+  return true;
+}
+
+// Try to detect the API address inside the Xray config file. This is a
+// lightweight regex-based extractor that looks for an "api" object and
+// attempts to read an "address" (string) and/or "port" (number) field.
+// Returns a string like "127.0.0.1:10085" if detected.
+std::optional<std::string> V2rayManager::DetectApiAddressInConfig(const fs::path& config_path) {
+  try {
+    std::ifstream in(config_path.string());
+    if (!in) return std::nullopt;
+    std::string s((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    // Find the "api" object
+    std::regex api_re("\"api\"\\s*:\\s*\\{([\\s\\S]*?)\\}", std::regex_constants::icase);
+    std::smatch api_match;
+    if (!std::regex_search(s, api_match, api_re)) return std::nullopt;
+
+    std::string api_body = api_match[1].str();
+
+    // Try to find "address": "..."
+    std::regex addr_re("\"address\"\\s*:\\s*\"([^\"]+)\"");
+    std::smatch addr_match;
+    std::string address;
+    if (std::regex_search(api_body, addr_match, addr_re)) {
+      address = addr_match[1].str();
+    }
+
+    // Try to find "port": number
+    std::regex port_re("\"port\"\\s*:\\s*(\\d+)");
+    std::smatch port_match;
+    std::string port;
+    if (std::regex_search(api_body, port_match, port_re)) {
+      port = port_match[1].str();
+    }
+
+    if (!address.empty() && !port.empty()) {
+      // If the address already contains a colon (host:port), return it as-is.
+      if (address.find(':') != std::string::npos) return address;
+      return address + ":" + port;
+    }
+
+    if (!address.empty()) {
+      // No explicit port found; leave as-is (caller may append default)
+      return address;
+    }
+
+    if (!port.empty()) {
+      return std::string("127.0.0.1:") + port;
+    }
+
+    return std::nullopt;
+  } catch (...) {
+    return std::nullopt;
+  }
+}
+
+// Check if a TCP port on loopback is free. Uses Winsock.
+bool V2rayManager::IsPortFree(uint16_t port) {
+  WSADATA wsaData;
+  if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+    return false;
+  }
+  SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  if (s == INVALID_SOCKET) {
+    WSACleanup();
+    return false;
+  }
+
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  // Use InetPtonA to avoid deprecated inet_addr warnings
+  if (InetPtonA(AF_INET, "127.0.0.1", &addr.sin_addr) != 1) {
+    WSACleanup();
+    return false;
+  }
+  addr.sin_port = htons(port);
+
+  int result = bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+  if (result == 0) {
+    closesocket(s);
+    WSACleanup();
+    return true;
+  }
+  closesocket(s);
+  WSACleanup();
+  return false;
+}
+
+// Find an ephemeral free port by binding to port 0.
+uint16_t V2rayManager::FindFreePort() {
+  WSADATA wsaData;
+  if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+    return 0;
+  }
+
+  SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  if (s == INVALID_SOCKET) {
+    WSACleanup();
+    return 0;
+  }
+
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  // Use InetPtonA to avoid deprecated inet_addr warnings
+  if (InetPtonA(AF_INET, "127.0.0.1", &addr.sin_addr) != 1) {
+    WSACleanup();
+    return 0;
+  }
+  addr.sin_port = htons(0);
+
+  if (bind(s, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+    closesocket(s);
+    WSACleanup();
+    return 0;
+  }
+
+  sockaddr_in assigned{};
+  int len = sizeof(assigned);
+  if (getsockname(s, reinterpret_cast<sockaddr*>(&assigned), &len) != 0) {
+    closesocket(s);
+    WSACleanup();
+    return 0;
+  }
+
+  uint16_t port = ntohs(assigned.sin_port);
+  closesocket(s);
+  WSACleanup();
+  return port;
+}
+
+// Replace configured ports in the config file if they are already in use.
+// This is a best-effort, string-based approach: it searches for patterns like
+// "port": 10807 and 127.0.0.1:10807 and replaces occupied ports with a free one.
+bool V2rayManager::ReplacePortsInConfigFile(const fs::path& config_path) {
+  if (!fs::exists(config_path)) return false;
+
+  std::ifstream ifs(config_path);
+  if (!ifs.is_open()) return false;
+  std::stringstream ss;
+  ss << ifs.rdbuf();
+  std::string content = ss.str();
+  ifs.close();
+
+  bool modified = false;
+
+  // Pattern 1: "port": 12345
+  std::regex port_key_pattern("\"port\"\\s*:\\s*(\\d+)");
+  std::smatch match;
+  std::string new_content = content;
+  auto search_start = new_content.cbegin();
+  while (std::regex_search(search_start, new_content.cend(), match, port_key_pattern)) {
+    int port = std::stoi(match[1].str());
+    if (port >= 1 && port <= 65535) {
+      if (!IsPortFree(static_cast<uint16_t>(port))) {
+        uint16_t free_port = FindFreePort();
+        if (free_port != 0) {
+          // Replace only this occurrence
+          auto pos = match.position(1) + (search_start - new_content.cbegin());
+          new_content.replace(pos, match[1].length(), std::to_string(free_port));
+          modified = true;
+          // advance search_start beyond replaced part
+          search_start = new_content.cbegin() + pos + std::to_string(free_port).length();
+          continue;
+        }
+      }
+    }
+    // move forward
+    search_start = match.suffix().first;
+  }
+
+  // Pattern 2: 127.0.0.1:12345 (common 'listen' patterns)
+  std::regex listen_ip_pattern("127\\.0\\.0\\.1\\s*:\\s*(\\d+)");
+  search_start = new_content.cbegin();
+  while (std::regex_search(search_start, new_content.cend(), match, listen_ip_pattern)) {
+    int port = std::stoi(match[1].str());
+    if (port >= 1 && port <= 65535) {
+      if (!IsPortFree(static_cast<uint16_t>(port))) {
+        uint16_t free_port = FindFreePort();
+        if (free_port != 0) {
+          auto pos = match.position(1) + (search_start - new_content.cbegin());
+          new_content.replace(pos, match[1].length(), std::to_string(free_port));
+          modified = true;
+          search_start = new_content.cbegin() + pos + std::to_string(free_port).length();
+          continue;
+        }
+      }
+    }
+    search_start = match.suffix().first;
+  }
+
+  if (modified) {
+    std::ofstream ofs(config_path, std::ios::binary | std::ios::trunc);
+    if (!ofs.is_open()) return false;
+    ofs << new_content;
+    ofs.close();
+    std::cerr << "Modified Xray config to avoid occupied ports." << std::endl;
+  }
+
+  // If there is no `"api"` section, inject a minimal api block so the
+  // plugin can connect to Xray management API. We attempt to pick a free
+  // port (default 10085) and insert the block at the top-level, right after
+  // the "log" section or as the first key after the opening brace.
+  std::regex api_key_re("\"api\"\\s*:\\s*");
+  if (!std::regex_search(new_content, api_key_re)) {
+    uint16_t api_port = 10085;
+    if (!IsPortFree(api_port)) {
+      uint16_t p = FindFreePort();
+      if (p != 0) api_port = p;
+    }
+
+    // Strategy: Find the position after the "log" section closes.
+    // Then insert the api block with a comma separator between them.
+    size_t insert_pos = std::string::npos;
+    
+    // Look for the pattern: "log" : { ... } (with proper brace matching)
+    std::regex log_start_re("\"log\"\\s*:\\s*\\{");
+    std::smatch m;
+    if (std::regex_search(new_content, m, log_start_re)) {
+      // Found "log" section start. Now find the matching closing brace.
+      size_t brace_start = m.position(0) + m.length(0) - 1;  // position of '{'
+      int depth = 1;
+      size_t pos = brace_start + 1;
+      bool in_string = false;
+      bool escaped = false;
+      
+      while (pos < new_content.length() && depth > 0) {
+        char c = new_content[pos];
+        if (escaped) {
+          escaped = false;
+          pos++;
+          continue;
+        }
+        if (c == '\\') {
+          escaped = true;
+          pos++;
+          continue;
+        }
+        if (c == '"') {
+          in_string = !in_string;
+        }
+        if (!in_string) {
+          if (c == '{') depth++;
+          else if (c == '}') depth--;
+        }
+        pos++;
+      }
+      
+      if (depth == 0) {
+        // pos is now one position after the closing brace of "log"
+        // Consume any whitespace after the closing brace
+        while (pos < new_content.length() && 
+               (new_content[pos] == ' ' || new_content[pos] == '\n' || 
+                new_content[pos] == '\r' || new_content[pos] == '\t')) {
+          pos++;
+        }
+        insert_pos = pos;
+      }
+    }
+    
+    // Fallback: if no "log" section found, insert after root opening brace
+    if (insert_pos == std::string::npos) {
+      auto brace_pos = new_content.find('{');
+      if (brace_pos != std::string::npos) {
+        insert_pos = brace_pos + 1;
+      }
+    }
+
+    if (insert_pos != std::string::npos) {
+      // Create a proper api block with leading comma separator
+      // Use the modern format with "listen" instead of separate "address" and "port"
+      std::ostringstream api_block;
+      api_block << ",\n  \"api\": {\n";
+      api_block << "    \"tag\": \"api\",\n";
+      api_block << "    \"listen\": \"127.0.0.1:" << api_port << "\",\n";
+      api_block << "    \"services\": [\"HandlerService\", \"StatsService\", \"LoggerService\"]\n";
+      api_block << "  }";
+
+      new_content.insert(insert_pos, api_block.str());
+      
+      // Write back
+      std::ofstream ofs2(config_path, std::ios::binary | std::ios::trunc);
+      if (ofs2.is_open()) {
+        ofs2 << new_content;
+        ofs2.close();
+        std::cerr << "Inserted minimal Xray API block at 127.0.0.1:" << api_port << std::endl;
+        // Update our configured api_address_
+        api_address_ = std::string("127.0.0.1:") + std::to_string(api_port);
+      }
+    }
+  }
+
   return true;
 }
 
@@ -257,12 +709,87 @@ bool V2rayManager::WriteConfigToFile(const std::string& config, fs::path& config
 }
 
 bool V2rayManager::InitializeApiClient() {
-  api_client_ = std::make_unique<ApiClient>();
-  api_client_->api_address_ = api_address_;
-  
-  // Test API connection
-  std::string version = api_client_->GetVersion();
-  return !version.empty();
+  // Before creating the ApiClient, ensure the API TCP port is accepting
+  // connections. This avoids confusing failures from the HTTP client
+  // when the socket isn't yet bound.
+  auto can_connect = [&](const std::string &addr) -> bool {
+    // Parse host:port
+    auto colon = addr.find(':');
+    if (colon == std::string::npos) return false;
+    std::string host = addr.substr(0, colon);
+    std::string port_str = addr.substr(colon + 1);
+    int port = std::stoi(port_str);
+
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2,2), &wsaData) != 0) return false;
+    SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (s == INVALID_SOCKET) { WSACleanup(); return false; }
+    sockaddr_in sa{};
+    sa.sin_family = AF_INET;
+    sa.sin_port = htons(static_cast<u_short>(port));
+    if (InetPtonA(AF_INET, host.c_str(), &sa.sin_addr) != 1) {
+      closesocket(s);
+      WSACleanup();
+      return false;
+    }
+    // Set non-blocking connect with timeout
+    u_long nb = 1;
+    ioctlsocket(s, FIONBIO, &nb);
+    int res = connect(s, reinterpret_cast<sockaddr*>(&sa), sizeof(sa));
+    if (res == 0) {
+      closesocket(s);
+      WSACleanup();
+      return true;
+    }
+    if (WSAGetLastError() != WSAEWOULDBLOCK) {
+      closesocket(s);
+      WSACleanup();
+      return false;
+    }
+    // Wait for socket writable
+    fd_set wf;
+    FD_ZERO(&wf);
+    FD_SET(s, &wf);
+    timeval tv{};
+    tv.tv_sec = 0;
+    tv.tv_usec = 300 * 1000; // 300ms
+    res = select(0, nullptr, &wf, nullptr, &tv);
+    if (res > 0 && FD_ISSET(s, &wf)) {
+      // check for error
+      int err = 0;
+      int len = sizeof(err);
+      getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&err), &len);
+      closesocket(s);
+      WSACleanup();
+      return err == 0;
+    }
+    closesocket(s);
+    WSACleanup();
+    return false;
+  };
+
+  const int max_attempts = 8;
+  const std::chrono::milliseconds attempt_delay(300);
+  for (int i = 0; i < max_attempts; ++i) {
+    std::cerr << "InitializeApiClient: attempt " << (i + 1) << " / " << max_attempts << ", probing " << api_address_ << std::endl;
+    bool tcp_ok = can_connect(api_address_);
+    std::cerr << "InitializeApiClient: TCP probe returned " << (tcp_ok ? "OK" : "NO") << std::endl;
+
+    // Try HTTP API request regardless of TCP probe result to capture WinINet errors.
+    api_client_ = std::make_unique<ApiClient>();
+    api_client_->api_address_ = api_address_;
+    std::string version = api_client_->GetVersion();
+    if (!version.empty()) {
+      std::cerr << "Connected to Xray API, version: " << version << std::endl;
+      return true;
+    }
+    // Clean up and retry
+    api_client_.reset();
+    std::this_thread::sleep_for(attempt_delay);
+  }
+
+  std::cerr << "InitializeApiClient: all attempts failed" << std::endl;
+  return false;
 }
 
 void V2rayManager::UpdateTrafficStats() {
@@ -410,7 +937,9 @@ int V2rayManager::GetServerDelay(const std::string& config, const std::string& u
     return -1;
   }
   
-  temp_process->pi = pi;
+  // Move process handles into our opaque ProcessHandle wrapper
+  temp_process->hProcess = reinterpret_cast<std::uintptr_t>(pi.hProcess);
+  temp_process->hThread = reinterpret_cast<std::uintptr_t>(pi.hThread);
   
   // Wait for Xray to start
   std::this_thread::sleep_for(std::chrono::milliseconds(1000));
@@ -569,14 +1098,18 @@ std::string ApiClient::GetVersion() {
 bool ApiClient::MakeApiRequest(const std::string& endpoint, std::string& response) {
   std::string url = BuildApiUrl(endpoint);
   
+  std::cerr << "ApiClient::MakeApiRequest: requesting URL: " << url << std::endl;
+
   HINTERNET hInternet = InternetOpenA("Xray-API-Client", INTERNET_OPEN_TYPE_DIRECT, nullptr, nullptr, 0);
   if (!hInternet) {
+    std::cerr << "InternetOpenA failed: " << GetLastError() << std::endl;
     return false;
   }
   
   HINTERNET hConnect = InternetOpenUrlA(hInternet, url.c_str(), nullptr, 0, 
                                        INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_RELOAD, 0);
   if (!hConnect) {
+    std::cerr << "InternetOpenUrlA failed for URL " << url << ", GetLastError=" << GetLastError() << std::endl;
     InternetCloseHandle(hInternet);
     return false;
   }
@@ -593,6 +1126,9 @@ bool ApiClient::MakeApiRequest(const std::string& endpoint, std::string& respons
   InternetCloseHandle(hConnect);
   InternetCloseHandle(hInternet);
   
+  if (response.empty()) {
+    std::cerr << "ApiClient::MakeApiRequest: response empty for URL: " << url << std::endl;
+  }
   return !response.empty();
 }
 
