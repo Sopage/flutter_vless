@@ -2,6 +2,7 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <cstdio>
 #include <chrono>
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -972,7 +973,7 @@ int V2rayManager::GetConnectedServerDelay(const std::string& url) {
 }
 
 std::string V2rayManager::GetCoreVersion() {
-  // Try to get version from API first
+  // Try to get version from API first (if Xray is running)
   if (api_client_) {
     std::string version = api_client_->GetVersion();
     if (!version.empty()) {
@@ -980,9 +981,29 @@ std::string V2rayManager::GetCoreVersion() {
     }
   }
   
-  // Fallback: try to get version from executable file info
+  // Try to get version by running xray.exe -version
   if (!xray_executable_path_.empty() && fs::exists(xray_executable_path_)) {
-    DWORD dummy;
+    // Try running xray.exe -version to get version string
+    std::string command = "\"" + xray_executable_path_.string() + "\" -version";
+    FILE* pipe = _popen(command.c_str(), "r");
+    if (pipe != nullptr) {
+      char buffer[128];
+      std::string result = "";
+      while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        result += buffer;
+      }
+      _pclose(pipe);
+      
+      // Parse version from output (format: "Xray 1.8.4" or "Xray 25.10.15")
+      std::regex version_pattern(R"(Xray\s+(\d+\.\d+\.\d+))");
+      std::smatch match;
+      if (std::regex_search(result, match, version_pattern)) {
+        return match[1].str();
+      }
+    }
+    
+    // Fallback: try to get version from executable file info
+    DWORD dummy = 0;
     DWORD size = GetFileVersionInfoSizeA(xray_executable_path_.string().c_str(), &dummy);
     if (size > 0) {
       std::vector<char> buffer(size);
@@ -990,7 +1011,7 @@ std::string V2rayManager::GetCoreVersion() {
         VS_FIXEDFILEINFO* file_info = nullptr;
         UINT len = 0;
         if (VerQueryValueA(buffer.data(), "\\", reinterpret_cast<LPVOID*>(&file_info), &len)) {
-          if (file_info) {
+          if (file_info && len > 0) {
             int major = HIWORD(file_info->dwFileVersionMS);
             int minor = LOWORD(file_info->dwFileVersionMS);
             int build = HIWORD(file_info->dwFileVersionLS);

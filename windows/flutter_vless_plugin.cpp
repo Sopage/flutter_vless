@@ -57,6 +57,12 @@ class FlutterVlessPlugin : public flutter::Plugin {
   int64_t total_download_ = 0;
   int64_t upload_speed_ = 0;
   int64_t download_speed_ = 0;
+  // UI thread invocation helpers
+  HWND main_window_handle_ = nullptr;
+  int window_proc_delegate_id_ = 0;
+  UINT ui_callback_message_id_ = 0;
+  std::mutex ui_callbacks_mutex_;
+  std::vector<std::function<void()>> ui_callbacks_;
 };
 
 void FlutterVlessPlugin::RegisterWithRegistrar(
@@ -125,14 +131,74 @@ FlutterVlessPlugin::FlutterVlessPlugin(flutter::PluginRegistrarWindows *registra
       });
 
   status_channel_->SetStreamHandler(std::move(status_handler));
+
+  // Setup UI thread invocation mechanism using window proc delegate
+  if (registrar_) {
+    auto view = registrar_->GetView();
+    if (view) {
+      main_window_handle_ = view->GetNativeWindow();
+      if (main_window_handle_) {
+        LogMessage("Main window handle obtained: " + std::to_string(reinterpret_cast<uintptr_t>(main_window_handle_)));
+      } else {
+        LogMessage("Warning: GetNativeWindow returned null");
+      }
+    } else {
+      LogMessage("Warning: GetView returned null");
+    }
+    
+    // Register window message ID once
+    ui_callback_message_id_ = RegisterWindowMessageA("FLUTTER_VLESS_INVOKE_UI_CALLBACK");
+    if (ui_callback_message_id_ == 0) {
+      LogMessage("Error: Failed to register window message");
+    } else {
+      LogMessage("Window message ID registered: " + std::to_string(ui_callback_message_id_));
+    }
+    
+    // Register a window proc delegate to run callbacks on the UI thread
+    window_proc_delegate_id_ = registrar_->RegisterTopLevelWindowProcDelegate(
+        [this](HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
+            -> std::optional<LRESULT> {
+          // Log all messages to debug (can be removed later)
+          if (message == ui_callback_message_id_) {
+            std::vector<std::function<void()>> tasks;
+            {
+              std::lock_guard<std::mutex> lock(ui_callbacks_mutex_);
+              tasks.swap(ui_callbacks_);
+            }
+            LogMessage("Window proc delegate called for message " + std::to_string(message) + ", executing " + std::to_string(tasks.size()) + " tasks");
+            for (auto &t : tasks) {
+              try {
+                t();
+              } catch (const std::exception& e) {
+                LogMessage("Exception in UI callback: " + std::string(e.what()));
+              } catch (...) {
+                LogMessage("Unknown exception in UI callback");
+              }
+            }
+            return std::optional<LRESULT>(0);
+          }
+          return std::nullopt;
+        });
+    
+    if (window_proc_delegate_id_ != 0) {
+      LogMessage("Window proc delegate registered successfully");
+    } else {
+      LogMessage("Warning: Failed to register window proc delegate");
+    }
+  }
   
-  LogMessage("Plugin initialized - EventSink operations are thread-safe in modern Flutter");
+  LogMessage("Plugin initialized");
 }
 
 FlutterVlessPlugin::~FlutterVlessPlugin() {
   StopStatusTimer();
   if (v2ray_manager_) {
     v2ray_manager_->Stop();
+  }
+  // Unregister window proc delegate
+  if (registrar_ && window_proc_delegate_id_ != 0) {
+    registrar_->UnregisterTopLevelWindowProcDelegate(window_proc_delegate_id_);
+    window_proc_delegate_id_ = 0;
   }
   // Clear status sink
   {
@@ -319,8 +385,11 @@ void FlutterVlessPlugin::UpdateStatus() {
 
 void FlutterVlessPlugin::SendStatusToUI(const flutter::EncodableList& status) {
   // In modern Flutter Windows, EventSink operations are thread-safe
-  // We can safely call Success() from any thread
-  std::lock_guard<std::mutex> lock(sink_mutex_);
+  // We can safely call Success() from any thread, but Flutter prefers UI thread
+  // Since PostMessage -> delegate mechanism doesn't seem to work reliably,
+  // we'll use a simpler approach: send directly with proper synchronization
+  
+  std::lock_guard<std::mutex> sink_lock(sink_mutex_);
   if (status_sink_) {
     try {
       // Build status string for logging
