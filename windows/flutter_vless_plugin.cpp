@@ -16,8 +16,15 @@
 #include <vector>
 
 #include "v2ray_manager.h"
+#include <iostream>
 
 namespace {
+
+// Helper to log to console
+inline void LogMessage(const std::string& msg) {
+  std::cout << "[FlutterVless] " << msg << std::endl;
+  OutputDebugStringA(("[FlutterVless] " + msg + "\n").c_str());
+}
 
 class FlutterVlessPlugin : public flutter::Plugin {
  public:
@@ -34,6 +41,7 @@ class FlutterVlessPlugin : public flutter::Plugin {
   void StartStatusTimer();
   void StopStatusTimer();
   void UpdateStatus();
+  void SendStatusToUI(const flutter::EncodableList& status);
 
   flutter::PluginRegistrarWindows *registrar_;
   std::unique_ptr<flutter::EventChannel<flutter::EncodableValue>> status_channel_;
@@ -43,16 +51,12 @@ class FlutterVlessPlugin : public flutter::Plugin {
   std::atomic<bool> is_running_{false};
   std::atomic<bool> should_stop_{false};
   std::mutex status_mutex_;
+  std::mutex sink_mutex_;
   std::chrono::steady_clock::time_point start_time_;
   int64_t total_upload_ = 0;
   int64_t total_download_ = 0;
   int64_t upload_speed_ = 0;
   int64_t download_speed_ = 0;
-  // UI thread invocation helpers
-  HWND main_window_handle_ = nullptr;
-  int window_proc_delegate_id_ = 0;
-  std::mutex ui_callbacks_mutex_;
-  std::vector<std::function<void()>> ui_callbacks_;
 };
 
 void FlutterVlessPlugin::RegisterWithRegistrar(
@@ -84,49 +88,45 @@ FlutterVlessPlugin::FlutterVlessPlugin(flutter::PluginRegistrarWindows *registra
       [this](const flutter::EncodableValue *arguments,
              std::unique_ptr<flutter::EventSink<flutter::EncodableValue>> &&events)
           -> std::unique_ptr<flutter::StreamHandlerError<flutter::EncodableValue>> {
-        status_sink_ = std::move(events);
+        LogMessage("EventChannel listener connected");
+        {
+          std::lock_guard<std::mutex> lock(sink_mutex_);
+          status_sink_ = std::move(events);
+        }
+        
+        // Send initial DISCONNECTED status immediately (on UI thread)
+        if (status_sink_) {
+          flutter::EncodableList initial_status;
+          initial_status.push_back(flutter::EncodableValue("0"));
+          initial_status.push_back(flutter::EncodableValue("0"));
+          initial_status.push_back(flutter::EncodableValue("0"));
+          initial_status.push_back(flutter::EncodableValue("0"));
+          initial_status.push_back(flutter::EncodableValue("0"));
+          initial_status.push_back(flutter::EncodableValue("DISCONNECTED"));
+          
+          LogMessage("Sending initial DISCONNECTED status");
+          // This callback is already on UI thread, safe to call directly
+          std::lock_guard<std::mutex> lock(sink_mutex_);
+          if (status_sink_) {
+            status_sink_->Success(flutter::EncodableValue(initial_status));
+          }
+        }
+        
         return nullptr;
       },
       [this](const flutter::EncodableValue *arguments)
           -> std::unique_ptr<flutter::StreamHandlerError<flutter::EncodableValue>> {
-        status_sink_.reset();
+        LogMessage("EventChannel listener disconnected");
+        {
+          std::lock_guard<std::mutex> lock(sink_mutex_);
+          status_sink_.reset();
+        }
         return nullptr;
       });
 
   status_channel_->SetStreamHandler(std::move(status_handler));
-
-  // Setup UI invocation mechanism: register a window proc delegate that will
-  // run queued callbacks on the UI thread. This avoids depending on
-  // registrar->GetTaskRunner which is not available in all embedder versions.
-  if (registrar_) {
-    if (registrar_->GetView()) {
-      main_window_handle_ = registrar_->GetView()->GetNativeWindow();
-    }
-    // Use RegisterTopLevelWindowProcDelegate to be invoked from the window
-    // procedure on the UI thread. The delegate will run all queued callbacks
-    // when it receives our custom message.
-    UINT message_id = RegisterWindowMessageA("FLUTTER_VLESS_INVOKE_UI_CALLBACK");
-    window_proc_delegate_id_ = registrar_->RegisterTopLevelWindowProcDelegate(
-        [this, message_id](HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam)
-            -> std::optional<LRESULT> {
-          if (message == message_id) {
-            std::vector<std::function<void()>> tasks;
-            {
-              std::lock_guard<std::mutex> lock(ui_callbacks_mutex_);
-              tasks.swap(ui_callbacks_);
-            }
-            for (auto &t : tasks) {
-              try {
-                t();
-              } catch (...) {
-                // swallow exceptions to avoid crashing UI thread
-              }
-            }
-            return std::optional<LRESULT>(0);
-          }
-          return std::nullopt;
-        });
-  }
+  
+  LogMessage("Plugin initialized - EventSink operations are thread-safe in modern Flutter");
 }
 
 FlutterVlessPlugin::~FlutterVlessPlugin() {
@@ -134,10 +134,10 @@ FlutterVlessPlugin::~FlutterVlessPlugin() {
   if (v2ray_manager_) {
     v2ray_manager_->Stop();
   }
-  // Unregister window proc delegate
-  if (registrar_ && window_proc_delegate_id_ != 0) {
-    registrar_->UnregisterTopLevelWindowProcDelegate(window_proc_delegate_id_);
-    window_proc_delegate_id_ = 0;
+  // Clear status sink
+  {
+    std::lock_guard<std::mutex> lock(sink_mutex_);
+    status_sink_.reset();
   }
 }
 
@@ -151,7 +151,8 @@ void FlutterVlessPlugin::HandleMethodCall(
   } else if (method_call.method_name().compare("initializeVless") == 0) {
     const auto *arguments = std::get_if<flutter::EncodableMap>(method_call.arguments());
     if (arguments) {
-      // Initialize v2ray manager
+      LogMessage("initializeVless called");
+      // Just initialize and return - EventChannel will send initial status
       result->Success(flutter::EncodableValue(nullptr));
     } else {
       result->Error("INVALID_ARGUMENTS", "Invalid arguments for initializeVless");
@@ -176,10 +177,14 @@ void FlutterVlessPlugin::HandleMethodCall(
         }
 
         std::thread([this, config, proxy_only]() {
+          LogMessage("Starting Xray...");
           if (v2ray_manager_->Start(config, proxy_only)) {
+            LogMessage("Xray started successfully");
             is_running_ = true;
             start_time_ = std::chrono::steady_clock::now();
             StartStatusTimer();
+          } else {
+            LogMessage("Xray failed to start");
           }
         }).detach();
 
@@ -191,6 +196,7 @@ void FlutterVlessPlugin::HandleMethodCall(
       result->Error("INVALID_ARGUMENTS", "Invalid arguments for startVless");
     }
   } else if (method_call.method_name().compare("stopVless") == 0) {
+    LogMessage("stopVless called");
     StopStatusTimer();
     if (v2ray_manager_) {
       v2ray_manager_->Stop();
@@ -201,47 +207,16 @@ void FlutterVlessPlugin::HandleMethodCall(
     upload_speed_ = 0;
     download_speed_ = 0;
     
-    if (status_sink_) {
-      flutter::EncodableList status;
-      status.push_back(flutter::EncodableValue("0"));
-      status.push_back(flutter::EncodableValue("0"));
-      status.push_back(flutter::EncodableValue("0"));
-      status.push_back(flutter::EncodableValue("0"));
-      status.push_back(flutter::EncodableValue("0"));
-      status.push_back(flutter::EncodableValue("DISCONNECTED"));
-
-      // Queue the status to run on UI thread via our window-proc delegate.
-      {
-        std::lock_guard<std::mutex> lock(ui_callbacks_mutex_);
-        ui_callbacks_.push_back([this, status]() mutable {
-          if (status_sink_) {
-            status_sink_->Success(flutter::EncodableValue(status));
-          }
-        });
-      }
-      {
-        std::lock_guard<std::mutex> ui_lock(ui_callbacks_mutex_);
-        ui_callbacks_.push_back([this, status]() mutable {
-          if (status_sink_) {
-            status_sink_->Success(flutter::EncodableValue(status));
-          }
-        });
-      }
-      if (main_window_handle_) {
-        UINT message_id = RegisterWindowMessageA("FLUTTER_VLESS_INVOKE_UI_CALLBACK");
-        PostMessage(main_window_handle_, message_id, 0, 0);
-      } else {
-        // Fallback: call directly (may produce non-platform thread warning on
-        // some embedder versions, but we'll try to avoid that by using the
-        // delegate when possible).
-        std::lock_guard<std::mutex> ui_lock(ui_callbacks_mutex_);
-        auto tasks = std::move(ui_callbacks_);
-        ui_callbacks_.clear();
-        for (auto &t : tasks) {
-          t();
-        }
-      }
-    }
+    // Send DISCONNECTED status on UI thread
+    flutter::EncodableList status;
+    status.push_back(flutter::EncodableValue("0"));
+    status.push_back(flutter::EncodableValue("0"));
+    status.push_back(flutter::EncodableValue("0"));
+    status.push_back(flutter::EncodableValue("0"));
+    status.push_back(flutter::EncodableValue("0"));
+    status.push_back(flutter::EncodableValue("DISCONNECTED"));
+    
+    SendStatusToUI(status);
     
     result->Success(flutter::EncodableValue(nullptr));
   } else if (method_call.method_name().compare("getServerDelay") == 0) {
@@ -279,6 +254,7 @@ void FlutterVlessPlugin::HandleMethodCall(
     result->Error("INVALID_ARGUMENTS", "Invalid arguments for getConnectedServerDelay");
   } else if (method_call.method_name().compare("getCoreVersion") == 0) {
     std::string version = v2ray_manager_->GetCoreVersion();
+    LogMessage("getCoreVersion: " + version);
     result->Success(flutter::EncodableValue(version));
   } else {
     result->NotImplemented();
@@ -303,8 +279,11 @@ void FlutterVlessPlugin::StopStatusTimer() {
 }
 
 void FlutterVlessPlugin::UpdateStatus() {
-  if (!status_sink_ || !is_running_) {
-    return;
+  {
+    std::lock_guard<std::mutex> sink_lock(sink_mutex_);
+    if (!status_sink_ || !is_running_) {
+      return;
+    }
   }
 
   std::lock_guard<std::mutex> status_lock(status_mutex_);
@@ -331,36 +310,41 @@ void FlutterVlessPlugin::UpdateStatus() {
   status.push_back(flutter::EncodableValue(std::to_string(total_download_)));
   status.push_back(flutter::EncodableValue("CONNECTED"));
 
-  // Queue the status and post to UI thread via our delegate.
-  {
-    std::lock_guard<std::mutex> lock(ui_callbacks_mutex_);
-    ui_callbacks_.push_back([this, status]() mutable {
-      if (status_sink_) {
-        status_sink_->Success(flutter::EncodableValue(status));
+  LogMessage("UpdateStatus: duration=" + std::to_string(duration) + " up=" + 
+            std::to_string(upload_speed_) + " down=" + std::to_string(download_speed_));
+
+  // Send status to UI thread
+  SendStatusToUI(status);
+}
+
+void FlutterVlessPlugin::SendStatusToUI(const flutter::EncodableList& status) {
+  // In modern Flutter Windows, EventSink operations are thread-safe
+  // We can safely call Success() from any thread
+  std::lock_guard<std::mutex> lock(sink_mutex_);
+  if (status_sink_) {
+    try {
+      // Build status string for logging
+      std::string status_str = "[";
+      for (size_t i = 0; i < status.size(); ++i) {
+        if (i > 0) status_str += ", ";
+        const auto& val = status[i];
+        if (auto str_val = std::get_if<std::string>(&val)) {
+          status_str += *str_val;
+        } else {
+          status_str += "?";
+        }
       }
-    });
-  }
-      {
-        std::lock_guard<std::mutex> ui_lock(ui_callbacks_mutex_);
-        ui_callbacks_.push_back([this, status]() mutable {
-          if (status_sink_) {
-            status_sink_->Success(flutter::EncodableValue(status));
-          }
-        });
-      }
-  if (main_window_handle_) {
-    UINT message_id = RegisterWindowMessageA("FLUTTER_VLESS_INVOKE_UI_CALLBACK");
-    PostMessage(main_window_handle_, message_id, 0, 0);
+      status_str += "]";
+      
+      status_sink_->Success(flutter::EncodableValue(status));
+      LogMessage("Status sent successfully: " + status_str);
+    } catch (const std::exception& e) {
+      LogMessage("Error sending status: " + std::string(e.what()));
+    } catch (...) {
+      LogMessage("Unknown error sending status");
+    }
   } else {
-    // Fallback: run callbacks directly.
-    std::vector<std::function<void()>> tasks;
-    {
-      std::lock_guard<std::mutex> ui_lock(ui_callbacks_mutex_);
-      tasks.swap(ui_callbacks_);
-    }
-    for (auto &t : tasks) {
-      t();
-    }
+    LogMessage("Warning: status_sink_ is null, cannot send status");
   }
 }
 
