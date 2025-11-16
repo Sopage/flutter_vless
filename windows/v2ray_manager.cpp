@@ -180,8 +180,41 @@ void V2rayManager::Stop() {
   download_speed_ = 0;
 }
 
+/**
+ * @brief Main execution loop for Xray process management.
+ * 
+ * @details Execution Flow:
+ * 1. Modifies configuration for Windows-specific requirements
+ * 2. Writes configuration to temporary file
+ * 3. Starts Xray process with the configuration
+ * 4. Configures system proxy (for both VPN and proxy modes)
+ * 5. Initializes API client for statistics
+ * 6. Starts statistics update thread
+ * 7. Monitors process health until stopped
+ * 
+ * @details Configuration Modification:
+ * Before starting Xray, the configuration is modified for Windows:
+ * - VPN mode: Adds routing rules to route all traffic through proxy outbound
+ * - Proxy mode: Configuration remains unchanged
+ * 
+ * @details System Proxy Setup:
+ * After Xray starts successfully, system proxy is configured:
+ * - VPN mode: System proxy + Xray routing rules (TUN not supported)
+ * - Proxy mode: System proxy only
+ * 
+ * The SOCKS5 port is automatically detected from the configuration by searching
+ * for the "in_proxy" tag, or falling back to the first SOCKS inbound.
+ * 
+ * @details Process Monitoring:
+ * Continuously monitors the Xray process to detect unexpected termination.
+ * If the process exits, the manager stops and cleans up resources.
+ * 
+ * @note The function runs in a separate thread to avoid blocking.
+ * @note Temporary configuration files are cleaned up on exit.
+ * @note System proxy is cleared in Stop() method, not here.
+ */
 void V2rayManager::RunV2ray() {
-  // Modify config for Windows (add TUN inbound for VPN mode, keep as-is for proxy mode)
+  // Modify config for Windows (VPN mode: routing rules, proxy mode: unchanged)
   std::string modified_config = ModifyConfigForWindows(current_config_, proxy_only_);
   
   // Write config to temporary file
@@ -1208,9 +1241,43 @@ static std::wstring StringToWString(const std::string& str) {
   return wstr;
 }
 
-// Modify Xray configuration for Windows
-// For VPN mode: configure routing to route all traffic through proxy (Windows doesn't support TUN)
-// For proxy mode: keep configuration as-is (applications will use SOCKS5 proxy)
+/**
+ * @brief Modifies Xray configuration for Windows platform-specific requirements.
+ * 
+ * @details TUN Protocol Limitation on Windows:
+ * Unlike Linux, Android, and iOS, Xray on Windows does not support the TUN protocol.
+ * The TUN protocol requires kernel-level network interface creation capabilities
+ * that are not available in standard Windows Xray builds. When attempting to use
+ * TUN on Windows, Xray returns: "unknown config id: tun" error.
+ * 
+ * @details VPN Mode Implementation Strategy:
+ * Since TUN is unavailable, VPN mode on Windows uses a hybrid approach:
+ * 1. System Proxy Configuration: All applications route through SOCKS5 proxy
+ * 2. Xray Routing Rules: Ensures all traffic is routed through "proxy" outbound
+ * 
+ * This provides VPN-like functionality for most applications, though it's not
+ * a true virtual network interface. Applications that bypass system proxy
+ * settings may not be routed correctly, but the majority of user applications
+ * (browsers, most network libraries) respect Windows proxy settings.
+ * 
+ * @details Routing Rule Structure:
+ * The function adds a routing rule with:
+ * - type: "field" (matches traffic based on criteria)
+ * - network: "tcp,udp" (applies to both TCP and UDP traffic)
+ * - outboundTag: "proxy" (routes to the outbound tagged as "proxy")
+ * 
+ * This rule is inserted at the beginning of the rules array to ensure it has
+ * priority over other routing rules.
+ * 
+ * @param config The original Xray configuration JSON string.
+ * @param proxy_only If true, returns config unchanged. If false, modifies for VPN mode.
+ * 
+ * @return Modified configuration string with Windows-specific routing rules.
+ * 
+ * @note The configuration must contain an outbound with tag "proxy" for VPN mode.
+ * @note If routing section doesn't exist, it will be created.
+ * @note If rules array doesn't exist in routing, a warning is logged.
+ */
 std::string V2rayManager::ModifyConfigForWindows(const std::string& config, bool proxy_only) {
   if (proxy_only) {
     // Proxy mode: no modification needed, applications will use SOCKS5 proxy
@@ -1298,7 +1365,41 @@ std::string V2rayManager::ModifyConfigForWindows(const std::string& config, bool
   }
 }
 
-// Set Windows system proxy
+/**
+ * @brief Configures Windows system-wide proxy settings using WinINET API.
+ * 
+ * @details Proxy Configuration Format:
+ * Windows WinINET API uses the format "socks=ADDRESS:PORT" to specify a SOCKS5
+ * proxy. The "socks=" prefix tells Windows to use SOCKS5 protocol.
+ * 
+ * @details Bypass List:
+ * Local addresses are added to the bypass list to prevent proxy loops and
+ * ensure local services remain accessible:
+ * - localhost
+ * - 127.* (all loopback addresses)
+ * - 10.*, 172.16-31.*, 192.168.* (RFC 1918 private networks)
+ * 
+ * @details Unicode API Usage:
+ * Uses Unicode versions of WinINET API (InternetSetOptionW) and Unicode
+ * structures (INTERNET_PER_CONN_OPTION_LISTW) because modern Windows
+ * applications are compiled with UNICODE defined. String buffers are stored
+ * as class members to ensure they persist during the API call.
+ * 
+ * @details System Notification:
+ * After setting proxy, the function calls:
+ * - INTERNET_OPTION_SETTINGS_CHANGED: Notifies system that proxy settings changed
+ * - INTERNET_OPTION_REFRESH: Forces immediate refresh of proxy settings
+ * 
+ * This ensures all applications pick up the new proxy settings immediately.
+ * 
+ * @param proxy_address The proxy server address (typically "127.0.0.1").
+ * @param proxy_port The SOCKS5 proxy port number.
+ * 
+ * @return true if proxy was set successfully, false on error.
+ * 
+ * @note Requires appropriate system permissions. May fail without admin rights.
+ * @note The proxy_string format is "socks=ADDRESS:PORT" for SOCKS5 protocol.
+ */
 bool V2rayManager::SetSystemProxy(const std::string& proxy_address, uint16_t proxy_port) {
   try {
     // Use WinINET API to set system proxy
@@ -1355,7 +1456,23 @@ bool V2rayManager::SetSystemProxy(const std::string& proxy_address, uint16_t pro
   }
 }
 
-// Clear Windows system proxy
+/**
+ * @brief Clears Windows system-wide proxy settings.
+ * 
+ * @details Restoration Process:
+ * Sets PROXY_TYPE_DIRECT flag to disable proxy and restore direct network
+ * connections. This is essential during cleanup to prevent leaving the system
+ * in a proxied state after the application terminates.
+ * 
+ * @details System Notification:
+ * After clearing proxy, notifies the system to ensure all applications
+ * immediately pick up the change and revert to direct connections.
+ * 
+ * @return true if proxy was cleared successfully, false on error.
+ * 
+ * @note Should always be called during cleanup to prevent proxy persistence.
+ * @note Uses Unicode WinINET API (InternetSetOptionW) for consistency.
+ */
 bool V2rayManager::ClearSystemProxy() {
   try {
     INTERNET_PER_CONN_OPTION_LISTW option_list;

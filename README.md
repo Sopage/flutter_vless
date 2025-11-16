@@ -164,28 +164,30 @@ See [IOS_SETUP.md](./IOS_SETUP.md) for detailed iOS setup instructions.
 ### macOS
 
 See [MACOS_SETUP.md](./MACOS_SETUP.md) for detailed macOS setup instructions.
-
-**Quick setup:**
-1. Download Xray-core binary (modern approach, recommended):
-   ```bash
-   ./scripts/download_xray_macos.sh
-   ```
-2. Follow the setup instructions in [MACOS_SETUP.md](./MACOS_SETUP.md)
-3. For detailed Xray setup, see [MACOS_XRAY_SETUP.md](./MACOS_XRAY_SETUP.md)
-
-**Note**: 
-- Uses **Xray-core v25.10.15+** binary directly (modern 2025 approach)
-- No need for outdated xray-mobile framework
-- Same approach as Windows version for consistency
+For detailed Xray setup, see [MACOS_XRAY_SETUP.md](./MACOS_XRAY_SETUP.md)
 
 ### Windows
-[Setup for Windows](./WINDOWS_SETUP.md)
 
-**Important**: Windows support requires Xray-core (version 25.10.15 or later). See [XRAY_SETUP.md](./windows/XRAY_SETUP.md) for installation instructions.
+1. Download Xray-core version 25.10.15 or later from:
+   https://github.com/XTLS/Xray-core/releases
+
+2. Look for `Xray-windows-64.zip` or `Xray-windows-32.zip` depending on your system
+
+3. Extract the archive and locate "xray.exe"
+
+4. Copy "xray.exe" into the windows folder of your project
+
+6. The final structure should be:
+   example/
+     windows/
+       xray/
+         xray.exe  <-- Your xray.exe should be here 
+
+**Important**:  See [XRAY_SETUP.md](./windows/XRAY_SETUP.md) for detailed info.
 
 ### Android
 
-1.  Add the attribute android:extractNativeLibs="true" to the <application> tag in your AndroidManifest.xml.
+1.  Add the attribute android:extractNativeLibs="true" to the `<application>` tag in your AndroidManifest.xml.
 
 ```xml
 <application
@@ -269,7 +271,7 @@ await flutterVless.stopVless();
 
 **Q: My Play Store submission was rejected.** A: Ensure your app includes a clear privacy policy and a disclosure about VPN/proxy usage in the store listing.
 
-**Q: ****\`\`**** shows very high latency.** A: Verify DNS, server address, and network reachability. Try from a different network or device to exclude local network issues.
+**Q: Shows very high latency.** A: Verify DNS, server address, and network reachability. Try from a different network or device to exclude local network issues.
 
 ---
 
