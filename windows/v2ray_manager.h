@@ -62,6 +62,13 @@ class V2rayManager {
   std::optional<fs::path> FindXrayExecutable();
   bool ValidateConfig(const std::string& config);
   void CleanupTempFiles();
+  
+  // Configuration modification for Windows
+  std::string ModifyConfigForWindows(const std::string& config, bool proxy_only);
+  
+  // Windows system proxy management
+  bool SetSystemProxy(const std::string& proxy_address, uint16_t proxy_port);
+  bool ClearSystemProxy();
 
   std::atomic<bool> is_running_{false};
   std::thread v2ray_thread_;
@@ -84,6 +91,10 @@ class V2rayManager {
   fs::path xray_executable_path_;
   std::string api_address_ = "127.0.0.1:10085";  // Default Xray API address
   std::chrono::steady_clock::time_point start_time_;
+  
+  // Proxy settings buffers (must persist during API calls)
+  std::vector<char> proxy_server_buf_;
+  std::vector<char> proxy_bypass_buf_;
 };
 
 // Process handle wrapper for xray.exe

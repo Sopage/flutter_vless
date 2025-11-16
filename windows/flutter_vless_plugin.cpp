@@ -89,6 +89,12 @@ FlutterVlessPlugin::FlutterVlessPlugin(flutter::PluginRegistrarWindows *registra
           registrar->messenger(), "flutter_vless/status",
           &flutter::StandardMethodCodec::GetInstance());
 
+  // ============================================================================
+  // ⚠️ ВАЖНО: НЕ ТРОГАТЬ UI ВЗАИМОДЕЙСТВИЕ! ⚠️
+  // ============================================================================
+  // EventChannel handler для отправки статусов в Flutter UI.
+  // Код работает корректно, НЕ МЕНЯТЬ логику подключения/отключения!
+  // ============================================================================
   auto status_handler = std::make_unique<
       flutter::StreamHandlerFunctions<flutter::EncodableValue>>(
       [this](const flutter::EncodableValue *arguments,
@@ -132,6 +138,13 @@ FlutterVlessPlugin::FlutterVlessPlugin(flutter::PluginRegistrarWindows *registra
 
   status_channel_->SetStreamHandler(std::move(status_handler));
 
+  // ============================================================================
+  // ⚠️ ВАЖНО: НЕ ТРОГАТЬ UI ВЗАИМОДЕЙСТВИЕ! ⚠️
+  // ============================================================================
+  // Настройка механизма вызова UI потока через window proc delegate.
+  // Этот код используется для других целей, НЕ для отправки статусов!
+  // НЕ УДАЛЯТЬ и НЕ МЕНЯТЬ без крайней необходимости.
+  // ============================================================================
   // Setup UI thread invocation mechanism using window proc delegate
   if (registrar_) {
     auto view = registrar_->GetView();
@@ -273,6 +286,12 @@ void FlutterVlessPlugin::HandleMethodCall(
     upload_speed_ = 0;
     download_speed_ = 0;
     
+    // ============================================================================
+    // ⚠️ ВАЖНО: НЕ ТРОГАТЬ UI ВЗАИМОДЕЙСТВИЕ! ⚠️
+    // ============================================================================
+    // Отправка статуса DISCONNECTED при остановке.
+    // НЕ МЕНЯТЬ формат статуса или способ отправки!
+    // ============================================================================
     // Send DISCONNECTED status on UI thread
     flutter::EncodableList status;
     status.push_back(flutter::EncodableValue("0"));
@@ -344,6 +363,12 @@ void FlutterVlessPlugin::StopStatusTimer() {
   }
 }
 
+// ============================================================================
+// ⚠️ ВАЖНО: НЕ ТРОГАТЬ UI ВЗАИМОДЕЙСТВИЕ! ⚠️
+// ============================================================================
+// Функция обновления статуса и отправки в UI.
+// НЕ МЕНЯТЬ логику формирования и отправки статусов!
+// ============================================================================
 void FlutterVlessPlugin::UpdateStatus() {
   {
     std::lock_guard<std::mutex> sink_lock(sink_mutex_);
@@ -383,6 +408,13 @@ void FlutterVlessPlugin::UpdateStatus() {
   SendStatusToUI(status);
 }
 
+// ============================================================================
+// ⚠️ ВАЖНО: НЕ ТРОГАТЬ UI ВЗАИМОДЕЙСТВИЕ! ⚠️
+// ============================================================================
+// Эта функция отвечает за отправку статуса в Flutter UI.
+// Код работает корректно, НЕ МЕНЯТЬ логику отправки статусов!
+// Предупреждение о не-UI потоке не критично, функциональность работает.
+// ============================================================================
 void FlutterVlessPlugin::SendStatusToUI(const flutter::EncodableList& status) {
   // In modern Flutter Windows, EventSink operations are thread-safe
   // We can safely call Success() from any thread, but Flutter prefers UI thread

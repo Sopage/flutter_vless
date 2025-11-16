@@ -13,8 +13,14 @@ add_executable(${BINARY_NAME} WIN32
   "win32_window.cpp"
   "${FLUTTER_MANAGED_DIR}/generated_plugin_registrant.cc"
   "Runner.rc"
-  "runner.exe.manifest"
 )
+
+# Embed manifest file using linker
+if(MSVC)
+  target_link_options(${BINARY_NAME} PRIVATE 
+    "/MANIFESTFILE:${CMAKE_CURRENT_SOURCE_DIR}/runner.exe.manifest"
+  )
+endif()
 
 # Apply the standard set of build settings. This can be removed for applications
 # that need different build settings.

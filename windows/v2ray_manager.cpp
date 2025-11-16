@@ -17,6 +17,8 @@
 #include <regex>
 #include <map>
 #include <vector>
+#include <cstring>
+#include <string>
 
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -157,6 +159,9 @@ void V2rayManager::Stop() {
 
   is_running_.store(false);
   
+  // Clear system proxy if it was set (both VPN and proxy modes use system proxy on Windows)
+  ClearSystemProxy();
+  
   StopXrayProcess();
   
   if (v2ray_thread_.joinable()) {
@@ -176,9 +181,12 @@ void V2rayManager::Stop() {
 }
 
 void V2rayManager::RunV2ray() {
+  // Modify config for Windows (add TUN inbound for VPN mode, keep as-is for proxy mode)
+  std::string modified_config = ModifyConfigForWindows(current_config_, proxy_only_);
+  
   // Write config to temporary file
   fs::path config_path;
-  if (!WriteConfigToFile(current_config_, config_path)) {
+  if (!WriteConfigToFile(modified_config, config_path)) {
     std::cerr << "Failed to write Xray configuration file" << std::endl;
     is_running_.store(false);
     return;
@@ -196,6 +204,40 @@ void V2rayManager::RunV2ray() {
   
   // Wait a bit for Xray to start
   std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  
+  // For VPN mode and proxy mode, set system proxy
+  // VPN mode on Windows uses system proxy + routing (TUN not supported)
+  // Proxy mode uses system proxy only
+  {
+    // Find SOCKS5 port from config - look for "in_proxy" tag or first SOCKS inbound
+    uint16_t socks_port = 10807; // Default port
+    std::string config_str = modified_config;
+    
+    // Try to find port in "in_proxy" inbound first
+    std::regex in_proxy_pattern("\"tag\"\\s*:\\s*\"in_proxy\"[\\s\\S]*?\"port\"\\s*:\\s*(\\d+)");
+    std::smatch match;
+    if (std::regex_search(config_str, match, in_proxy_pattern)) {
+      socks_port = static_cast<uint16_t>(std::stoi(match[1].str()));
+    } else {
+      // Fallback: find first "protocol": "socks" and its port
+      std::regex socks_pattern("\"protocol\"\\s*:\\s*\"socks\"[\\s\\S]*?\"port\"\\s*:\\s*(\\d+)");
+      if (std::regex_search(config_str, match, socks_pattern)) {
+        socks_port = static_cast<uint16_t>(std::stoi(match[1].str()));
+      } else {
+        // Last resort: find any port in inbounds
+        std::regex port_pattern("\"inbounds\"[\\s\\S]*?\"port\"\\s*:\\s*(\\d+)");
+        if (std::regex_search(config_str, match, port_pattern)) {
+          socks_port = static_cast<uint16_t>(std::stoi(match[1].str()));
+        }
+      }
+    }
+    
+    if (!SetSystemProxy("127.0.0.1", socks_port)) {
+      std::cerr << "Warning: Failed to set system proxy. Proxy mode may not work correctly." << std::endl;
+    } else {
+      std::cerr << "System proxy set to 127.0.0.1:" << socks_port << std::endl;
+    }
+  }
   
   // Initialize API client
   if (!InitializeApiClient()) {
@@ -1154,3 +1196,196 @@ bool ApiClient::MakeApiRequest(const std::string& endpoint, std::string& respons
 std::string ApiClient::BuildApiUrl(const std::string& endpoint) {
   return "http://" + api_address_ + endpoint;
 }
+
+// Helper function to convert std::string to std::wstring
+static std::wstring StringToWString(const std::string& str) {
+  if (str.empty()) return std::wstring();
+  int size_needed = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, nullptr, 0);
+  if (size_needed <= 0) return std::wstring();
+  std::wstring wstr(size_needed, 0);
+  MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, &wstr[0], size_needed);
+  wstr.resize(size_needed - 1); // Remove null terminator
+  return wstr;
+}
+
+// Modify Xray configuration for Windows
+// For VPN mode: configure routing to route all traffic through proxy (Windows doesn't support TUN)
+// For proxy mode: keep configuration as-is (applications will use SOCKS5 proxy)
+std::string V2rayManager::ModifyConfigForWindows(const std::string& config, bool proxy_only) {
+  if (proxy_only) {
+    // Proxy mode: no modification needed, applications will use SOCKS5 proxy
+    return config;
+  }
+  
+  // VPN mode on Windows: configure routing to send all traffic through proxy
+  // Note: Windows Xray doesn't support TUN protocol, so we use routing + system proxy
+  // This will route all traffic through the proxy outbound (tagged as "proxy")
+  try {
+    // Find routing section and add rule to route all traffic through proxy
+    std::regex routing_pattern("\"routing\"\\s*:\\s*\\{");
+    std::smatch match;
+    
+    std::string modified = config;
+    
+    if (std::regex_search(modified, match, routing_pattern)) {
+      // Routing section exists - find rules array
+      size_t routing_start = match.position(0) + match.length(0);
+      
+      // Find "rules" array in routing
+      std::regex rules_pattern("\"rules\"\\s*:\\s*\\[");
+      std::string routing_section = modified.substr(routing_start);
+      std::smatch rules_match;
+      
+      if (std::regex_search(routing_section, rules_match, rules_pattern)) {
+        // Rules array exists - find where to insert
+        size_t rules_pos = routing_start + rules_match.position(0) + rules_match.length(0);
+        
+        // Skip whitespace
+        size_t pos = rules_pos;
+        while (pos < modified.length() && 
+               (modified[pos] == ' ' || modified[pos] == '\n' || 
+                modified[pos] == '\r' || modified[pos] == '\t')) {
+          pos++;
+        }
+        
+        // Check if rules array is empty
+        bool is_empty = (pos < modified.length() && modified[pos] == ']');
+        
+        // Build routing rule to send all traffic through proxy
+        std::string routing_rule;
+        if (is_empty) {
+          routing_rule = "    {\n      \"type\": \"field\",\n      \"network\": \"tcp,udp\",\n      \"outboundTag\": \"proxy\"\n    }";
+        } else {
+          routing_rule = "    {\n      \"type\": \"field\",\n      \"network\": \"tcp,udp\",\n      \"outboundTag\": \"proxy\"\n    },\n    ";
+        }
+        
+        modified.insert(pos, routing_rule);
+        std::cerr << "Added routing rule for VPN mode (route all traffic through proxy)" << std::endl;
+      } else {
+        // No rules array - add it
+        std::cerr << "Warning: Could not find 'rules' in routing section" << std::endl;
+      }
+    } else {
+      // No routing section - add it
+      // Find position before closing brace of root object
+      size_t last_brace = modified.rfind('}');
+      if (last_brace != std::string::npos) {
+        // Check if there's a comma before the last brace
+        size_t check_pos = last_brace - 1;
+        while (check_pos > 0 && 
+               (modified[check_pos] == ' ' || modified[check_pos] == '\n' || 
+                modified[check_pos] == '\r' || modified[check_pos] == '\t')) {
+          check_pos--;
+        }
+        
+        std::string routing_section;
+        if (check_pos > 0 && modified[check_pos] != ',') {
+          routing_section = ",\n  \"routing\": {\n    \"domainStrategy\": \"UseIp\",\n    \"rules\": [\n      {\n        \"type\": \"field\",\n        \"network\": \"tcp,udp\",\n        \"outboundTag\": \"proxy\"\n      }\n    ]\n  }";
+        } else {
+          routing_section = "\n  \"routing\": {\n    \"domainStrategy\": \"UseIp\",\n    \"rules\": [\n      {\n        \"type\": \"field\",\n        \"network\": \"tcp,udp\",\n        \"outboundTag\": \"proxy\"\n      }\n    ]\n  }";
+        }
+        
+        modified.insert(last_brace, routing_section);
+        std::cerr << "Added routing section for VPN mode" << std::endl;
+      }
+    }
+    
+    return modified;
+    
+  } catch (const std::exception& e) {
+    std::cerr << "Error modifying config for Windows: " << e.what() << std::endl;
+    return config; // Return original config on error
+  }
+}
+
+// Set Windows system proxy
+bool V2rayManager::SetSystemProxy(const std::string& proxy_address, uint16_t proxy_port) {
+  try {
+    // Use WinINET API to set system proxy
+    // Format: socks=127.0.0.1:10807
+    std::string proxy_string = "socks=" + proxy_address + ":" + std::to_string(proxy_port);
+    std::wstring proxy_wstring = StringToWString(proxy_string);
+    
+    std::string bypass_str = "localhost;127.*;10.*;172.16.*;172.17.*;172.18.*;172.19.*;172.20.*;172.21.*;172.22.*;172.23.*;172.24.*;172.25.*;172.26.*;172.27.*;172.28.*;172.29.*;172.30.*;172.31.*;192.168.*";
+    std::wstring bypass_wstring = StringToWString(bypass_str);
+    
+    // Store wide strings in member buffers to ensure they persist during API call
+    proxy_server_buf_.clear();
+    proxy_server_buf_.resize((proxy_wstring.length() + 1) * sizeof(wchar_t));
+    memcpy(proxy_server_buf_.data(), proxy_wstring.c_str(), proxy_server_buf_.size());
+    
+    proxy_bypass_buf_.clear();
+    proxy_bypass_buf_.resize((bypass_wstring.length() + 1) * sizeof(wchar_t));
+    memcpy(proxy_bypass_buf_.data(), bypass_wstring.c_str(), proxy_bypass_buf_.size());
+    
+    INTERNET_PER_CONN_OPTION_LISTW option_list;
+    INTERNET_PER_CONN_OPTIONW options[3];
+    DWORD dwBufSize = sizeof(INTERNET_PER_CONN_OPTION_LISTW);
+    
+    options[0].dwOption = INTERNET_PER_CONN_FLAGS;
+    options[0].Value.dwValue = PROXY_TYPE_PROXY | PROXY_TYPE_DIRECT;
+    
+    options[1].dwOption = INTERNET_PER_CONN_PROXY_SERVER;
+    options[1].Value.pszValue = reinterpret_cast<LPWSTR>(proxy_server_buf_.data());
+    
+    options[2].dwOption = INTERNET_PER_CONN_PROXY_BYPASS;
+    options[2].Value.pszValue = reinterpret_cast<LPWSTR>(proxy_bypass_buf_.data());
+    
+    option_list.dwSize = sizeof(INTERNET_PER_CONN_OPTION_LISTW);
+    option_list.pszConnection = nullptr; // Apply to all connections
+    option_list.dwOptionCount = 3;
+    option_list.dwOptionError = 0;
+    option_list.pOptions = options;
+    
+    if (!InternetSetOptionW(nullptr, INTERNET_OPTION_PER_CONNECTION_OPTION, &option_list, dwBufSize)) {
+      DWORD error = GetLastError();
+      std::cerr << "InternetSetOptionW failed: " << error << std::endl;
+      return false;
+    }
+    
+    // Notify system that proxy settings have changed
+    InternetSetOptionW(nullptr, INTERNET_OPTION_SETTINGS_CHANGED, nullptr, 0);
+    InternetSetOptionW(nullptr, INTERNET_OPTION_REFRESH, nullptr, 0);
+    
+    std::cerr << "System proxy set successfully: " << proxy_string << std::endl;
+    return true;
+  } catch (const std::exception& e) {
+    std::cerr << "Exception setting system proxy: " << e.what() << std::endl;
+    return false;
+  }
+}
+
+// Clear Windows system proxy
+bool V2rayManager::ClearSystemProxy() {
+  try {
+    INTERNET_PER_CONN_OPTION_LISTW option_list;
+    INTERNET_PER_CONN_OPTIONW options[1];
+    DWORD dwBufSize = sizeof(INTERNET_PER_CONN_OPTION_LISTW);
+    
+    options[0].dwOption = INTERNET_PER_CONN_FLAGS;
+    options[0].Value.dwValue = PROXY_TYPE_DIRECT;
+    
+    option_list.dwSize = sizeof(INTERNET_PER_CONN_OPTION_LISTW);
+    option_list.pszConnection = nullptr;
+    option_list.dwOptionCount = 1;
+    option_list.dwOptionError = 0;
+    option_list.pOptions = options;
+    
+    if (!InternetSetOptionW(nullptr, INTERNET_OPTION_PER_CONNECTION_OPTION, &option_list, dwBufSize)) {
+      DWORD error = GetLastError();
+      std::cerr << "InternetSetOptionW failed to clear proxy: " << error << std::endl;
+      return false;
+    }
+    
+    // Notify system that proxy settings have changed
+    InternetSetOptionW(nullptr, INTERNET_OPTION_SETTINGS_CHANGED, nullptr, 0);
+    InternetSetOptionW(nullptr, INTERNET_OPTION_REFRESH, nullptr, 0);
+    
+    std::cerr << "System proxy cleared successfully" << std::endl;
+    return true;
+  } catch (const std::exception& e) {
+    std::cerr << "Exception clearing system proxy: " << e.what() << std::endl;
+    return false;
+  }
+}
+
