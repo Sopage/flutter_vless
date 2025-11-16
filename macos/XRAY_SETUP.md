@@ -1,24 +1,12 @@
 # Xray-core Setup for macOS
 
-This plugin uses **Xray-core binary directly** (v25.10.15+) instead of outdated xray-mobile framework. This is the modern approach for 2025, matching the Windows implementation.
-
-## Why Direct Binary?
-
-- ✅ **Always up-to-date**: Use latest Xray-core releases directly from [XTLS/Xray-core](https://github.com/XTLS/Xray-core/releases)
-- ✅ **No build complexity**: No need for Go, gomobile, or framework building
-- ✅ **Consistent with Windows**: Same approach across platforms
-- ✅ **Better performance**: Direct process execution, no framework overhead
-- ✅ **Easier maintenance**: Simple binary updates
+This plugin uses **Xray-core binary directly** v25.10.15+
 
 ## Quick Setup
 
 ### 1. Download Xray-core
 
-```bash
-./scripts/download_xray_macos.sh
-```
-
-This downloads the latest Xray-core v25.10.15+ for your architecture (arm64 or x86_64).
+ Use latest Xray-core releases directly from [XTLS/Xray-core](https://github.com/XTLS/Xray-core/releases)
 
 ### 2. Place Binary
 
@@ -56,8 +44,6 @@ The plugin automatically searches for `xray` in these locations (in order):
 
 ## Manual Download
 
-If the script doesn't work, download manually:
-
 1. Visit: https://github.com/XTLS/Xray-core/releases
 2. Download `Xray-macos-arm64-v8a.zip` (Apple Silicon) or `Xray-macos-64.zip` (Intel)
 3. Extract and place `xray` binary in one of the search paths above
@@ -71,7 +57,7 @@ Check if Xray is found:
 ./xray version
 
 # Should output something like:
-# Xray 1.8.0 (Xray, Penetrates Everything.) Custom
+# Xray 25.10.15+ (Xray, Penetrates Everything.) Custom
 ```
 
 ## Network Extension Considerations
@@ -83,21 +69,6 @@ Network Extensions run in a sandboxed environment. The binary must be:
 3. **In a system location** accessible by the extension
 
 **Recommended**: Include in extension bundle or use App Groups shared container.
-
-## Updating Xray
-
-To update to a newer version:
-
-```bash
-# Remove old binary
-rm build/xray-macos-bin/xray
-
-# Download latest
-./scripts/download_xray_macos.sh
-
-# Copy to your app/extension
-cp build/xray-macos-bin/xray <your-path>
-```
 
 ## Troubleshooting
 
@@ -152,6 +123,6 @@ Xray uses HTTP API (default: `127.0.0.1:10085`) for statistics. Ensure your conf
 ## References
 
 - [Xray-core Releases](https://github.com/XTLS/Xray-core/releases)
-- [Xray Documentation](https://xtls.github.io/)
+- [Xray Documentation](https://xtls.github.io/en/)
 - [Network Extension Guide](https://developer.apple.com/documentation/networkextension)
 

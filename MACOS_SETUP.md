@@ -6,13 +6,6 @@
 
 #### Download Xray-core
 
-Run the download script:
-
-```bash
-./scripts/download_xray_macos.sh
-```
-
-This will:
 1. Download the latest Xray-core v25.10.15+ from [official releases](https://github.com/XTLS/Xray-core/releases)
 2. Extract the binary for your architecture (arm64 or x86_64)
 3. Make it executable

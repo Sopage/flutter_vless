@@ -1,4 +1,5 @@
 # flutter_vless
+[![Pub Publisher](https://img.shields.io/pub/publisher/flutter_vless)](https://pub.dev/publishers/tfox.dev/packages)
 ![Pub Version](https://img.shields.io/pub/v/flutter_vless.svg) 
 
 **Flutter plugin to run VLESS/VMESS as a local proxy and VPN on Android, iOS, macOS, and Windows. V2Ray/Xray core. Shadowsocks, Trojan, Socks 5 support.**
@@ -8,6 +9,17 @@
 >  In contrast to similar plugins, we provide __iOS__, __macOS__, __Android__, and __Windows__ versions out of the box and for free, with the package being fully open-source.
 
 > Make sure to give a like on pub.dev and star on GitHub if this package was useful for you <3
+
+
+## Platform Support
+
+| Platform | Support | Min Version | Behavior |
+|----------|---------|-------------|----------|
+| Android  | ✅      | API 23 (Android 6.0) | Full functionality |
+| iOS      | ✅      | iOS 10.3 | Full functionality |
+| MacOS    | ✅      | macOS 13 | Full functionality |
+| Windows  | ✅      | Windows 10 | Full functionality |
+
 
 ## Table of contents
 
