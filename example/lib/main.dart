@@ -14,19 +14,23 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     final base = ThemeData.dark();
     return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'Flutter Vless — Example',
-      theme: base.copyWith(
-        colorScheme: base.colorScheme.copyWith(
-          primary: Colors.orangeAccent,
-          secondary: Colors.orangeAccent.shade200,
+        debugShowCheckedModeBanner: false,
+        title: 'Flutter Vless — Example',
+        theme: base.copyWith(
+          colorScheme: base.colorScheme.copyWith(
+            primary: Colors.orangeAccent,
+            secondary: Colors.orangeAccent.shade200,
+          ),
+          inputDecorationTheme: const InputDecorationTheme(
+            border: OutlineInputBorder(),
+          ),
         ),
-        inputDecorationTheme: const InputDecorationTheme(
-          border: OutlineInputBorder(),
-        ),
-      ),
-      home: const HomePage(),
-    );
+        home: Banner(
+          message: 'EXPERIMENTAL',
+          location: BannerLocation.topStart,
+          color: Colors.red,
+          child: const HomePage(),
+        ));
   }
 }
 

@@ -2,6 +2,7 @@
 
 #include <dwmapi.h>
 #include <flutter_windows.h>
+#include <shellscalingapi.h>
 
 #include "resource.h"
 
