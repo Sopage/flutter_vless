@@ -17,7 +17,7 @@
 |----------|---------|-------------|----------|
 | Android  | ✅      | API 23 (Android 6.0) | Full functionality |
 | iOS      | ✅      | iOS 10.3 | Full functionality |
-| MacOS    | ✅      | macOS 13 | Full functionality |
+| MacOS    | β      | macOS 13 | Full functionality |
 | Windows  | ✅      | Windows 10 | Full functionality |
 
 
