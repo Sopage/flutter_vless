@@ -72,6 +72,116 @@ namespace json_utils {
     }
     return "";
   }
+
+
+  // Replaces a top-level JSON section (key + value) with new content.
+  // Uses brace counting to correctly handle nested objects/arrays.
+  // Returns the modified JSON string.
+  std::string ReplaceJsonSection(const std::string& json, const std::string& key, const std::string& new_section) {
+    std::string result = json;
+    std::string key_pattern = "\"" + key + "\"";
+    
+    // Find key
+    size_t key_pos = result.find(key_pattern);
+    if (key_pos == std::string::npos) return result;
+    
+    // Find colon after key
+    size_t colon_pos = result.find(':', key_pos + key_pattern.length());
+    if (colon_pos == std::string::npos) return result;
+    
+    // Find start of value (should be '{' or '[' or '"' or digit/bool)
+    size_t value_start = colon_pos + 1;
+    while (value_start < result.length() && isspace(result[value_start])) {
+      value_start++;
+    }
+    
+    if (value_start >= result.length()) return result;
+    
+    // Determine end of value based on type
+    size_t value_end = std::string::npos;
+    char start_char = result[value_start];
+    
+    if (start_char == '{') {
+      // Object: count braces
+      int depth = 1;
+      size_t pos = value_start + 1;
+      bool in_string = false;
+      bool escaped = false;
+      
+      while (pos < result.length() && depth > 0) {
+        char c = result[pos];
+        if (escaped) {
+          escaped = false;
+        } else if (c == '\\') {
+          escaped = true;
+        } else if (c == '"') {
+          in_string = !in_string;
+        } else if (!in_string) {
+          if (c == '{') depth++;
+          else if (c == '}') depth--;
+        }
+        pos++;
+      }
+      if (depth == 0) value_end = pos;
+    } else if (start_char == '[') {
+      // Array: count brackets
+      int depth = 1;
+      size_t pos = value_start + 1;
+      bool in_string = false;
+      bool escaped = false;
+      
+      while (pos < result.length() && depth > 0) {
+        char c = result[pos];
+        if (escaped) {
+          escaped = false;
+        } else if (c == '\\') {
+          escaped = true;
+        } else if (c == '"') {
+          in_string = !in_string;
+        } else if (!in_string) {
+          if (c == '[') depth++;
+          else if (c == ']') depth--;
+        }
+        pos++;
+      }
+      if (depth == 0) value_end = pos;
+    } else if (start_char == '"') {
+      // String: find closing quote
+      size_t pos = value_start + 1;
+      bool escaped = false;
+      while (pos < result.length()) {
+        char c = result[pos];
+        if (escaped) {
+          escaped = false;
+        } else if (c == '\\') {
+          escaped = true;
+        } else if (c == '"') {
+          value_end = pos + 1;
+          break;
+        }
+        pos++;
+      }
+    } else {
+      // Primitive (number, boolean, null): read until comma or closing brace/bracket
+      size_t pos = value_start;
+      while (pos < result.length()) {
+        char c = result[pos];
+        if (c == ',' || c == '}' || c == ']' || isspace(c)) {
+          value_end = pos;
+          break;
+        }
+        pos++;
+      }
+    }
+    
+    if (value_end != std::string::npos) {
+      // Replace the range [key_pos, value_end) with new_section
+      // Note: new_section should include the key, e.g. "key": value
+      result.replace(key_pos, value_end - key_pos, new_section);
+    }
+    
+    return result;
+  }
 }
 
 // Implement ProcessHandle methods declared in the header. Keep Windows
@@ -1309,7 +1419,7 @@ bool V2rayManager::ClearSystemProxy() {
  * @note If routing section doesn't exist, it will be created.
  * @note If rules array doesn't exist in routing, a warning is logged.
  */
-std::string V2rayManager::ModifyConfigForWindows(const std::string& config, bool proxy_only) {
+  std::string V2rayManager::ModifyConfigForWindows(const std::string& config, bool proxy_only) {
   if (proxy_only) {
     // Proxy mode: no modification needed, applications will use SOCKS5 proxy
     return config;
@@ -1323,14 +1433,13 @@ std::string V2rayManager::ModifyConfigForWindows(const std::string& config, bool
     
     // The goal is to completely remove any rules that depend on geoip.dat or geosite.dat.
     // Instead of trying to patch individual rules, we will replace the entire "rules" array.
-    std::regex routing_pattern("\"routing\"\\s*:\\s*\\{[^}]*\\}");
-    std::smatch routing_match;
     
-    if (std::regex_search(modified, routing_match, routing_pattern)) {
+    // Check if "routing" section exists
+    if (modified.find("\"routing\"") != std::string::npos) {
       // Found an existing routing section. Replace the whole thing with our clean version.
       std::string new_routing = "\"routing\": {\n    \"domainStrategy\": \"UseIp\",\n    \"rules\": [\n      {\n        \"type\": \"field\",\n        \"network\": \"tcp,udp\",\n        \"outboundTag\": \"proxy\"\n      }\n    ]\n  }";
       
-      modified = std::regex_replace(modified, routing_pattern, new_routing);
+      modified = json_utils::ReplaceJsonSection(modified, "routing", new_routing);
       std::cerr << "Replaced routing section for VPN mode (route all traffic through proxy)" << std::endl;
     } else {
       // No routing section at all - create one and inject it.
