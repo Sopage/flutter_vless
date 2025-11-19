@@ -1436,11 +1436,11 @@ bool V2rayManager::ClearSystemProxy() {
     
     // Check if "routing" section exists
     if (modified.find("\"routing\"") != std::string::npos) {
-      // Found an existing routing section. Replace the whole thing with our clean version.
-      std::string new_routing = "\"routing\": {\n    \"domainStrategy\": \"UseIp\",\n    \"rules\": [\n      {\n        \"type\": \"field\",\n        \"network\": \"tcp,udp\",\n        \"outboundTag\": \"proxy\"\n      }\n    ]\n  }";
-      
-      modified = json_utils::ReplaceJsonSection(modified, "routing", new_routing);
-      std::cerr << "Replaced routing section for VPN mode (route all traffic through proxy)" << std::endl;
+      // Found an existing routing section. 
+      // PREVIOUSLY: We replaced the whole thing to avoid missing asset errors.
+      // NOW: Since we fixed asset loading, we should respect the user's routing rules.
+      // So we do NOTHING here.
+      std::cerr << "Using existing routing section from config" << std::endl;
     } else {
       // No routing section at all - create one and inject it.
       size_t last_brace = modified.rfind('}');

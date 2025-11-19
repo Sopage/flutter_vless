@@ -14,6 +14,8 @@ Download the latest Xray-core for Windows (minimum version 25.10.15) from:
 
 Extract the downloaded archive and locate `xray.exe`.
 
+//TODO: add about geoip.dat files for Windows
+
 ### 3. Place Xray Executable
 
 The plugin will automatically search for `xray.exe` in the following locations (in order):
