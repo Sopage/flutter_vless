@@ -108,6 +108,7 @@ class V2rayManager {
   
   // Helper methods
   std::optional<fs::path> FindXrayExecutable();
+  std::optional<fs::path> FindXrayAssets(const fs::path& executable_path);
   bool ValidateConfig(const std::string& config);
   void CleanupTempFiles();
   

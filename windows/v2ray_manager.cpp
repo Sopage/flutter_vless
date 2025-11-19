@@ -82,6 +82,17 @@ ProcessHandle::~ProcessHandle() {
   Close();
 }
 
+// Helper function to convert std::string to std::wstring
+static std::wstring StringToWString(const std::string& str) {
+  if (str.empty()) return std::wstring();
+  int size_needed = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, nullptr, 0);
+  if (size_needed <= 0) return std::wstring();
+  std::wstring wstr(size_needed, 0);
+  MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, &wstr[0], size_needed);
+  wstr.resize(size_needed - 1); // Remove null terminator
+  return wstr;
+}
+
 void ProcessHandle::Close() {
   if (hProcess != 0) {
     HANDLE hp = reinterpret_cast<HANDLE>(hProcess);
@@ -363,6 +374,27 @@ bool V2rayManager::StartXrayProcess(const std::string& config_path) {
   // ProcessHandle wrapper to avoid exposing PROCESS_INFORMATION in the
   // public header.
   PROCESS_INFORMATION pi = {};
+  
+  // Set working directory to the directory where xray.exe is located
+  // This ensures that if there are any data files (like geoip.dat) they will be found
+  std::string working_dir = xray_executable_path_.parent_path().string();
+  
+  // Try to find assets (geoip.dat, geosite.dat)
+  // If they are not in the same directory as xray.exe, we need to tell Xray where they are
+  auto assets_dir = FindXrayAssets(xray_executable_path_);
+  if (assets_dir) {
+    std::cerr << "Found Xray assets at: " << *assets_dir << std::endl;
+    
+    // If assets are in a different directory, set XRAY_LOCATION_ASSET environment variable
+    if (*assets_dir != xray_executable_path_.parent_path()) {
+      std::string assets_path_str = assets_dir->string();
+      SetEnvironmentVariableA("XRAY_LOCATION_ASSET", assets_path_str.c_str());
+      std::cerr << "Set XRAY_LOCATION_ASSET to: " << assets_path_str << std::endl;
+    }
+  } else {
+    std::cerr << "Warning: Could not find geoip.dat. Xray might fail to start if routing rules require it." << std::endl;
+  }
+  
   BOOL success = CreateProcessA(
     nullptr,
     cmd_buffer.data(),
@@ -371,7 +403,7 @@ bool V2rayManager::StartXrayProcess(const std::string& config_path) {
     TRUE,
     CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP,
     nullptr,
-    xray_executable_path_.parent_path().string().c_str(),
+    working_dir.c_str(),
     &si,
     &pi
   );
@@ -897,6 +929,19 @@ void V2rayManager::UpdateTrafficStats() {
   total_download_ = new_download;
 }
 
+void V2rayManager::GetTrafficStats(int64_t& upload, int64_t& download) {
+  std::lock_guard<std::mutex> lock(stats_mutex_);
+  upload = total_upload_;
+  download = total_download_;
+}
+
+int V2rayManager::GetConnectedServerDelay(const std::string& url) {
+  if (!is_running_.load() || !api_client_) {
+    return -1;
+  }
+  return api_client_->MeasureDelay(url);
+}
+
 int V2rayManager::MeasureDelayViaApi(const std::string& url) {
   if (!api_client_) {
     return -1;
@@ -941,7 +986,53 @@ std::optional<fs::path> V2rayManager::FindXrayExecutable() {
   
   for (const auto& path : search_paths) {
     if (fs::exists(path) && fs::is_regular_file(path)) {
+      std::cerr << "Found Xray executable: " << path << std::endl;
       return path;
+    }
+  }
+  
+  std::cerr << "Error: Could not find Xray executable." << std::endl;
+  return std::nullopt;
+}
+
+std::optional<fs::path> V2rayManager::FindXrayAssets(const fs::path& executable_path) {
+  // Files to look for
+  const std::string geoip = "geoip.dat";
+  
+  // 1. Check directory where xray.exe is located
+  fs::path exe_dir = executable_path.parent_path();
+  if (fs::exists(exe_dir / geoip)) {
+    return exe_dir;
+  }
+  
+  // 2. Check current working directory
+  if (fs::exists(fs::current_path() / geoip)) {
+    return fs::current_path();
+  }
+  
+  // 3. Check data/flutter_assets (standard Flutter Windows build layout)
+  // The executable is usually in build/windows/runner/Debug/ or Release/
+  // Assets are in data/flutter_assets/ relative to the executable
+  
+  // Get the directory of the running application (not xray.exe, but the flutter app)
+  char app_path_buffer[MAX_PATH];
+  if (GetModuleFileNameA(nullptr, app_path_buffer, MAX_PATH) > 0) {
+    fs::path app_dir = fs::path(app_path_buffer).parent_path();
+    
+    // Check data/flutter_assets
+    fs::path assets_dir = app_dir / "data" / "flutter_assets";
+    if (fs::exists(assets_dir / geoip)) {
+      return assets_dir;
+    }
+    
+    // Check data/flutter_assets/assets (common if user put them in an 'assets' folder)
+    if (fs::exists(assets_dir / "assets" / geoip)) {
+      return assets_dir / "assets";
+    }
+    
+    // Check data/flutter_assets/xray (if user organized them)
+    if (fs::exists(assets_dir / "xray" / geoip)) {
+      return assets_dir / "xray";
     }
   }
   
@@ -1038,331 +1129,6 @@ int V2rayManager::GetServerDelay(const std::string& config, const std::string& u
   // Add overhead time
   auto overhead_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
   return delay + static_cast<int>(overhead_ms);
-}
-
-int V2rayManager::GetConnectedServerDelay(const std::string& url) {
-  if (!is_running_.load() || !api_client_) {
-    return -1;
-  }
-  return api_client_->MeasureDelay(url);
-}
-
-std::string V2rayManager::GetCoreVersion() {
-  // Try to get version from API first (if Xray is running)
-  if (api_client_) {
-    std::string version = api_client_->GetVersion();
-    if (!version.empty()) {
-      return version;
-    }
-  }
-  
-  // Try to get version by running xray.exe -version
-  if (!xray_executable_path_.empty() && fs::exists(xray_executable_path_)) {
-    // Try running xray.exe -version to get version string
-    std::string command = "\"" + xray_executable_path_.string() + "\" -version";
-    FILE* pipe = _popen(command.c_str(), "r");
-    if (pipe != nullptr) {
-      char buffer[128];
-      std::string result = "";
-      while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-        result += buffer;
-      }
-      _pclose(pipe);
-      
-      // Parse version from output (format: "Xray 1.8.4" or "Xray 25.10.15")
-      std::regex version_pattern(R"(Xray\s+(\d+\.\d+\.\d+))");
-      std::smatch match;
-      if (std::regex_search(result, match, version_pattern)) {
-        return match[1].str();
-      }
-    }
-    
-    // Fallback: try to get version from executable file info
-    DWORD dummy = 0;
-    DWORD size = GetFileVersionInfoSizeA(xray_executable_path_.string().c_str(), &dummy);
-    if (size > 0) {
-      std::vector<char> buffer(size);
-      if (GetFileVersionInfoA(xray_executable_path_.string().c_str(), 0, size, buffer.data())) {
-        VS_FIXEDFILEINFO* file_info = nullptr;
-        UINT len = 0;
-        if (VerQueryValueA(buffer.data(), "\\", reinterpret_cast<LPVOID*>(&file_info), &len)) {
-          if (file_info && len > 0) {
-            int major = HIWORD(file_info->dwFileVersionMS);
-            int minor = LOWORD(file_info->dwFileVersionMS);
-            int build = HIWORD(file_info->dwFileVersionLS);
-            int revision = LOWORD(file_info->dwFileVersionLS);
-            return std::to_string(major) + "." + 
-                   std::to_string(minor) + "." + 
-                   std::to_string(build) + "." + 
-                   std::to_string(revision);
-          }
-        }
-      }
-    }
-  }
-  
-  return "Unknown";
-}
-
-void V2rayManager::GetTrafficStats(int64_t& upload, int64_t& download) {
-  std::lock_guard<std::mutex> lock(stats_mutex_);
-  upload = total_upload_;
-  download = total_download_;
-}
-
-// ApiClient implementation
-bool ApiClient::GetStats(std::map<std::string, int64_t>& stats) {
-  std::string response;
-  if (!MakeApiRequest("/stats", response)) {
-    return false;
-  }
-  
-  // Parse JSON response
-  // Xray stats API returns: {"stat":{"name":"value",...}}
-  // Simple parsing - in production, use a proper JSON library
-  std::regex stat_pattern("\"([^\"]+)\"\\s*:\\s*(\\d+)");
-  std::sregex_iterator iter(response.begin(), response.end(), stat_pattern);
-  std::sregex_iterator end;
-  
-  for (; iter != end; ++iter) {
-    std::smatch match = *iter;
-    std::string name = match[1].str();
-    int64_t value = std::stoll(match[2].str());
-    stats[name] = value;
-  }
-  
-  return true;
-}
-
-int ApiClient::MeasureDelay(const std::string& url) {
-  // Use Xray's outbound delay measurement
-  // This requires making an HTTP request through Xray and measuring time
-  HINTERNET hInternet = InternetOpenA("Xray-Delay-Test", INTERNET_OPEN_TYPE_DIRECT, nullptr, nullptr, 0);
-  if (!hInternet) {
-    return -1;
-  }
-  
-  // Set timeout
-  DWORD timeout = 5000; // 5 seconds
-  InternetSetOptionA(hInternet, INTERNET_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
-  InternetSetOptionA(hInternet, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
-  
-  // Parse URL to get host and path
-  std::string test_url = url.empty() ? "https://www.google.com/generate_204" : url;
-  
-  HINTERNET hConnect = InternetOpenUrlA(hInternet, test_url.c_str(), nullptr, 0, 
-                                         INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_RELOAD, 0);
-  if (!hConnect) {
-    InternetCloseHandle(hInternet);
-    return -1;
-  }
-  
-  auto start = std::chrono::steady_clock::now();
-  
-  char buffer[1024];
-  DWORD bytes_read = 0;
-  BOOL result = InternetReadFile(hConnect, buffer, sizeof(buffer) - 1, &bytes_read);
-  
-  auto end = std::chrono::steady_clock::now();
-  auto delay_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-  
-  InternetCloseHandle(hConnect);
-  InternetCloseHandle(hInternet);
-  
-  if (!result && GetLastError() != ERROR_SUCCESS) {
-    return -1;
-  }
-  
-  return static_cast<int>(delay_ms);
-}
-
-std::string ApiClient::GetVersion() {
-  std::string response;
-  if (MakeApiRequest("/api/v1/version", response)) {
-    // Parse version from response
-    std::regex version_pattern("\"version\"\\s*:\\s*\"([^\"]+)\"");
-    std::smatch match;
-    if (std::regex_search(response, match, version_pattern)) {
-      return match[1].str();
-    }
-  }
-  return "";
-}
-
-bool ApiClient::MakeApiRequest(const std::string& endpoint, std::string& response) {
-  std::string url = BuildApiUrl(endpoint);
-  
-  std::cerr << "ApiClient::MakeApiRequest: requesting URL: " << url << std::endl;
-
-  HINTERNET hInternet = InternetOpenA("Xray-API-Client", INTERNET_OPEN_TYPE_DIRECT, nullptr, nullptr, 0);
-  if (!hInternet) {
-    std::cerr << "InternetOpenA failed: " << GetLastError() << std::endl;
-    return false;
-  }
-  
-  HINTERNET hConnect = InternetOpenUrlA(hInternet, url.c_str(), nullptr, 0, 
-                                       INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_RELOAD, 0);
-  if (!hConnect) {
-    std::cerr << "InternetOpenUrlA failed for URL " << url << ", GetLastError=" << GetLastError() << std::endl;
-    InternetCloseHandle(hInternet);
-    return false;
-  }
-  
-  char buffer[4096];
-  DWORD bytes_read = 0;
-  response.clear();
-  
-  while (InternetReadFile(hConnect, buffer, sizeof(buffer) - 1, &bytes_read) && bytes_read > 0) {
-    buffer[bytes_read] = '\0';
-    response += buffer;
-  }
-  
-  InternetCloseHandle(hConnect);
-  InternetCloseHandle(hInternet);
-  
-  if (response.empty()) {
-    std::cerr << "ApiClient::MakeApiRequest: response empty for URL: " << url << std::endl;
-  }
-  return !response.empty();
-}
-
-std::string ApiClient::BuildApiUrl(const std::string& endpoint) {
-  return "http://" + api_address_ + endpoint;
-}
-
-// Helper function to convert std::string to std::wstring
-static std::wstring StringToWString(const std::string& str) {
-  if (str.empty()) return std::wstring();
-  int size_needed = MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, nullptr, 0);
-  if (size_needed <= 0) return std::wstring();
-  std::wstring wstr(size_needed, 0);
-  MultiByteToWideChar(CP_UTF8, 0, str.c_str(), -1, &wstr[0], size_needed);
-  wstr.resize(size_needed - 1); // Remove null terminator
-  return wstr;
-}
-
-/**
- * @brief Modifies Xray configuration for Windows platform-specific requirements.
- * 
- * @details TUN Protocol Limitation on Windows:
- * Unlike Linux, Android, and iOS, Xray on Windows does not support the TUN protocol.
- * The TUN protocol requires kernel-level network interface creation capabilities
- * that are not available in standard Windows Xray builds. When attempting to use
- * TUN on Windows, Xray returns: "unknown config id: tun" error.
- * 
- * @details VPN Mode Implementation Strategy:
- * Since TUN is unavailable, VPN mode on Windows uses a hybrid approach:
- * 1. System Proxy Configuration: All applications route through SOCKS5 proxy
- * 2. Xray Routing Rules: Ensures all traffic is routed through "proxy" outbound
- * 
- * This provides VPN-like functionality for most applications, though it's not
- * a true virtual network interface. Applications that bypass system proxy
- * settings may not be routed correctly, but the majority of user applications
- * (browsers, most network libraries) respect Windows proxy settings.
- * 
- * @details Routing Rule Structure:
- * The function adds a routing rule with:
- * - type: "field" (matches traffic based on criteria)
- * - network: "tcp,udp" (applies to both TCP and UDP traffic)
- * - outboundTag: "proxy" (routes to the outbound tagged as "proxy")
- * 
- * This rule is inserted at the beginning of the rules array to ensure it has
- * priority over other routing rules.
- * 
- * @param config The original Xray configuration JSON string.
- * @param proxy_only If true, returns config unchanged. If false, modifies for VPN mode.
- * 
- * @return Modified configuration string with Windows-specific routing rules.
- * 
- * @note The configuration must contain an outbound with tag "proxy" for VPN mode.
- * @note If routing section doesn't exist, it will be created.
- * @note If rules array doesn't exist in routing, a warning is logged.
- */
-std::string V2rayManager::ModifyConfigForWindows(const std::string& config, bool proxy_only) {
-  if (proxy_only) {
-    // Proxy mode: no modification needed, applications will use SOCKS5 proxy
-    return config;
-  }
-  
-  // VPN mode on Windows: configure routing to send all traffic through proxy
-  // Note: Windows Xray doesn't support TUN protocol, so we use routing + system proxy
-  // This will route all traffic through the proxy outbound (tagged as "proxy")
-  try {
-    // Find routing section and add rule to route all traffic through proxy
-    std::regex routing_pattern("\"routing\"\\s*:\\s*\\{");
-    std::smatch match;
-    
-    std::string modified = config;
-    
-    if (std::regex_search(modified, match, routing_pattern)) {
-      // Routing section exists - find rules array
-      size_t routing_start = match.position(0) + match.length(0);
-      
-      // Find "rules" array in routing
-      std::regex rules_pattern("\"rules\"\\s*:\\s*\\[");
-      std::string routing_section = modified.substr(routing_start);
-      std::smatch rules_match;
-      
-      if (std::regex_search(routing_section, rules_match, rules_pattern)) {
-        // Rules array exists - find where to insert
-        size_t rules_pos = routing_start + rules_match.position(0) + rules_match.length(0);
-        
-        // Skip whitespace
-        size_t pos = rules_pos;
-        while (pos < modified.length() && 
-               (modified[pos] == ' ' || modified[pos] == '\n' || 
-                modified[pos] == '\r' || modified[pos] == '\t')) {
-          pos++;
-        }
-        
-        // Check if rules array is empty
-        bool is_empty = (pos < modified.length() && modified[pos] == ']');
-        
-        // Build routing rule to send all traffic through proxy
-        std::string routing_rule;
-        if (is_empty) {
-          routing_rule = "    {\n      \"type\": \"field\",\n      \"network\": \"tcp,udp\",\n      \"outboundTag\": \"proxy\"\n    }";
-        } else {
-          routing_rule = "    {\n      \"type\": \"field\",\n      \"network\": \"tcp,udp\",\n      \"outboundTag\": \"proxy\"\n    },\n    ";
-        }
-        
-        modified.insert(pos, routing_rule);
-        std::cerr << "Added routing rule for VPN mode (route all traffic through proxy)" << std::endl;
-      } else {
-        // No rules array - add it
-        std::cerr << "Warning: Could not find 'rules' in routing section" << std::endl;
-      }
-    } else {
-      // No routing section - add it
-      // Find position before closing brace of root object
-      size_t last_brace = modified.rfind('}');
-      if (last_brace != std::string::npos) {
-        // Check if there's a comma before the last brace
-        size_t check_pos = last_brace - 1;
-        while (check_pos > 0 && 
-               (modified[check_pos] == ' ' || modified[check_pos] == '\n' || 
-                modified[check_pos] == '\r' || modified[check_pos] == '\t')) {
-          check_pos--;
-        }
-        
-        std::string routing_section;
-        if (check_pos > 0 && modified[check_pos] != ',') {
-          routing_section = ",\n  \"routing\": {\n    \"domainStrategy\": \"UseIp\",\n    \"rules\": [\n      {\n        \"type\": \"field\",\n        \"network\": \"tcp,udp\",\n        \"outboundTag\": \"proxy\"\n      }\n    ]\n  }";
-        } else {
-          routing_section = "\n  \"routing\": {\n    \"domainStrategy\": \"UseIp\",\n    \"rules\": [\n      {\n        \"type\": \"field\",\n        \"network\": \"tcp,udp\",\n        \"outboundTag\": \"proxy\"\n      }\n    ]\n  }";
-        }
-        
-        modified.insert(last_brace, routing_section);
-        std::cerr << "Added routing section for VPN mode" << std::endl;
-      }
-    }
-    
-    return modified;
-    
-  } catch (const std::exception& e) {
-    std::cerr << "Error modifying config for Windows: " << e.what() << std::endl;
-    return config; // Return original config on error
-  }
 }
 
 /**
@@ -1506,3 +1272,308 @@ bool V2rayManager::ClearSystemProxy() {
   }
 }
 
+/**
+ * @brief Modifies Xray configuration for Windows platform-specific requirements.
+ * 
+ * @details TUN Protocol Limitation on Windows:
+ * Unlike Linux, Android, and iOS, Xray on Windows does not support the TUN protocol.
+ * The TUN protocol requires kernel-level network interface creation capabilities
+ * that are not available in standard Windows Xray builds. When attempting to use
+ * TUN on Windows, Xray returns: "unknown config id: tun" error.
+ * 
+ * @details VPN Mode Implementation Strategy:
+ * Since TUN is unavailable, VPN mode on Windows uses a hybrid approach:
+ * 1. System Proxy Configuration: All applications route through SOCKS5 proxy
+ * 2. Xray Routing Rules: Ensures all traffic is routed through "proxy" outbound
+ * 
+ * This provides VPN-like functionality for most applications, though it's not
+ * a true virtual network interface. Applications that bypass system proxy
+ * settings may not be routed correctly, but the majority of user applications
+ * (browsers, most network libraries) respect Windows proxy settings.
+ * 
+ * @details Routing Rule Structure:
+ * The function adds a routing rule with:
+ * - type: "field" (matches traffic based on criteria)
+ * - network: "tcp,udp" (applies to both TCP and UDP traffic)
+ * - outboundTag: "proxy" (routes to the outbound tagged as "proxy")
+ * 
+ * This rule is inserted at the beginning of the rules array to ensure it has
+ * priority over other routing rules.
+ * 
+ * @param config The original Xray configuration JSON string.
+ * @param proxy_only If true, returns config unchanged. If false, modifies for VPN mode.
+ * 
+ * @return Modified configuration string with Windows-specific routing rules.
+ * 
+ * @note The configuration must contain an outbound with tag "proxy" for VPN mode.
+ * @note If routing section doesn't exist, it will be created.
+ * @note If rules array doesn't exist in routing, a warning is logged.
+ */
+std::string V2rayManager::ModifyConfigForWindows(const std::string& config, bool proxy_only) {
+  if (proxy_only) {
+    // Proxy mode: no modification needed, applications will use SOCKS5 proxy
+    return config;
+  }
+  
+  // VPN mode on Windows: configure routing to send all traffic through proxy
+  // Note: Windows Xray doesn't support TUN protocol, so we use routing + system proxy
+  // This will route all traffic through the proxy outbound (tagged as "proxy")
+  try {
+    std::string modified = config;
+    
+    // The goal is to completely remove any rules that depend on geoip.dat or geosite.dat.
+    // Instead of trying to patch individual rules, we will replace the entire "rules" array.
+    std::regex routing_pattern("\"routing\"\\s*:\\s*\\{[^}]*\\}");
+    std::smatch routing_match;
+    
+    if (std::regex_search(modified, routing_match, routing_pattern)) {
+      // Found an existing routing section. Replace the whole thing with our clean version.
+      std::string new_routing = "\"routing\": {\n    \"domainStrategy\": \"UseIp\",\n    \"rules\": [\n      {\n        \"type\": \"field\",\n        \"network\": \"tcp,udp\",\n        \"outboundTag\": \"proxy\"\n      }\n    ]\n  }";
+      
+      modified = std::regex_replace(modified, routing_pattern, new_routing);
+      std::cerr << "Replaced routing section for VPN mode (route all traffic through proxy)" << std::endl;
+    } else {
+      // No routing section at all - create one and inject it.
+      size_t last_brace = modified.rfind('}');
+      if (last_brace != std::string::npos) {
+        // Check for a trailing comma before the final '}'
+        size_t check_pos = last_brace - 1;
+        while (check_pos > 0 && 
+               (modified[check_pos] == ' ' || modified[check_pos] == '\n' || 
+                modified[check_pos] == '\r' || modified[check_pos] == '\t')) {
+          check_pos--;
+        }
+        
+        std::string routing_section;
+        if (check_pos > 0 && modified[check_pos] != ',') {
+          // Needs a comma separator
+          routing_section = ",\n  \"routing\": {\n    \"domainStrategy\": \"UseIp\",\n    \"rules\": [\n      {\n        \"type\": \"field\",\n        \"network\": \"tcp,udp\",\n        \"outboundTag\": \"proxy\"\n      }\n    ]\n  }";
+        } else {
+          // No comma needed
+          routing_section = "\n  \"routing\": {\n    \"domainStrategy\": \"UseIp\",\n    \"rules\": [\n      {\n        \"type\": \"field\",\n        \"network\": \"tcp,udp\",\n        \"outboundTag\": \"proxy\"\n      }\n    ]\n  }";
+        }
+        
+        modified.insert(last_brace, routing_section);
+        std::cerr << "Added routing section for VPN mode" << std::endl;
+      }
+    }
+    
+    return modified;
+    
+  } catch (const std::exception& e) {
+    std::cerr << "Error modifying config for Windows: " << e.what() << std::endl;
+    return config; // Return original config on error
+  }
+}
+
+std::string V2rayManager::GetCoreVersion() {
+  // Try to get version from API first (if Xray is running)
+  if (api_client_) {
+    std::string version = api_client_->GetVersion();
+    if (!version.empty()) {
+      return version;
+    }
+  }
+  
+  // Try to get version by running xray.exe -version
+  if (!xray_executable_path_.empty() && fs::exists(xray_executable_path_)) {
+    // Try running xray.exe -version to get version string
+    std::string command = "\"" + xray_executable_path_.string() + "\" -version";
+    FILE* pipe = _popen(command.c_str(), "r");
+    if (pipe != nullptr) {
+      char buffer[128];
+      std::string result = "";
+      while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        result += buffer;
+      }
+      _pclose(pipe);
+      
+      // Parse version from output (format: "Xray 1.8.4" or "Xray 25.10.15")
+      std::regex version_pattern(R"(Xray\s+(\d+\.\d+\.\d+))");
+      std::smatch match;
+      if (std::regex_search(result, match, version_pattern)) {
+        return match[1].str();
+      }
+    }
+    
+    // Fallback: try to get version from executable file info
+    DWORD dummy = 0;
+    DWORD size = GetFileVersionInfoSizeA(xray_executable_path_.string().c_str(), &dummy);
+    if (size > 0) {
+      std::vector<char> buffer(size);
+      if (GetFileVersionInfoA(xray_executable_path_.string().c_str(), 0, size, buffer.data())) {
+        VS_FIXEDFILEINFO* file_info = nullptr;
+        UINT len = 0;
+        if (VerQueryValueA(buffer.data(), "\\", reinterpret_cast<LPVOID*>(&file_info), &len)) {
+          if (file_info && len > 0) {
+            int major = HIWORD(file_info->dwFileVersionMS);
+            int minor = LOWORD(file_info->dwFileVersionMS);
+            int build = HIWORD(file_info->dwFileVersionLS);
+            int revision = LOWORD(file_info->dwFileVersionLS);
+            return std::to_string(major) + "." + 
+                   std::to_string(minor) + "." + 
+                   std::to_string(build) + "." + 
+                   std::to_string(revision);
+          }
+        }
+      }
+    }
+  }
+  
+  return "Unknown";
+}
+
+/**
+ * @brief Retrieves traffic statistics from Xray API.
+ * 
+ * @param stats Output map of statistic names to values.
+ * 
+ * @return true if statistics were retrieved successfully, false otherwise.
+ * 
+ * @details Statistics Format:
+ * Xray returns statistics in format:
+ * "inbound>>>tag>>>traffic>>>uplink" and "inbound>>>tag>>>traffic>>>downlink"
+ * 
+ * The function parses these and aggregates upload/download totals.
+ */
+bool ApiClient::GetStats(std::map<std::string, int64_t>& stats) {
+  std::string response;
+  if (!MakeApiRequest("/stats", response)) {
+    return false;
+  }
+  
+  // Parse JSON response
+  // Xray stats API returns: {"stat":{"name":"value",...}}
+  // Simple parsing - in production, use a proper JSON library
+  std::regex stat_pattern("\"([^\"]+)\"\\s*:\\s*(\\d+)");
+  std::sregex_iterator iter(response.begin(), response.end(), stat_pattern);
+  std::sregex_iterator end;
+  
+  for (; iter != end; ++iter) {
+    std::smatch match = *iter;
+    std::string name = match[1].str();
+    int64_t value = std::stoll(match[2].str());
+    stats[name] = value;
+  }
+  
+  return true;
+}
+
+/**
+ * @brief Measures network delay through Xray proxy.
+ * 
+ * @param url URL to test (typically a simple HTTP endpoint like google.com).
+ * 
+ * @return Delay in milliseconds, or -1 on error.
+ * 
+ * @details Implementation:
+ * Makes an HTTP request through the system proxy (which routes through Xray)
+ * and measures the time taken. This provides end-to-end latency measurement.
+ */
+int ApiClient::MeasureDelay(const std::string& url) {
+  // Use Xray's outbound delay measurement
+  // This requires making an HTTP request through Xray and measuring time
+  HINTERNET hInternet = InternetOpenA("Xray-Delay-Test", INTERNET_OPEN_TYPE_DIRECT, nullptr, nullptr, 0);
+  if (!hInternet) {
+    return -1;
+  }
+  
+  // Set timeout
+  DWORD timeout = 5000; // 5 seconds
+  InternetSetOptionA(hInternet, INTERNET_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
+  InternetSetOptionA(hInternet, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
+  
+  // Parse URL to get host and path
+  std::string test_url = url.empty() ? "https://www.google.com/generate_204" : url;
+  
+  HINTERNET hConnect = InternetOpenUrlA(hInternet, test_url.c_str(), nullptr, 0, 
+                                         INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_RELOAD, 0);
+  if (!hConnect) {
+    InternetCloseHandle(hInternet);
+    return -1;
+  }
+  
+  auto start = std::chrono::steady_clock::now();
+  
+  char buffer[1024];
+  DWORD bytes_read = 0;
+  BOOL result = InternetReadFile(hConnect, buffer, sizeof(buffer) - 1, &bytes_read);
+  
+  auto end = std::chrono::steady_clock::now();
+  auto delay_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+  
+  InternetCloseHandle(hConnect);
+  InternetCloseHandle(hInternet);
+  
+  if (!result && GetLastError() != ERROR_SUCCESS) {
+    return -1;
+  }
+  
+  return static_cast<int>(delay_ms);
+}
+
+std::string ApiClient::GetVersion() {
+  std::string response;
+  if (MakeApiRequest("/api/v1/version", response)) {
+    // Parse version from response
+    std::regex version_pattern("\"version\"\\s*:\\s*\"([^\"]+)\"");
+    std::smatch match;
+    if (std::regex_search(response, match, version_pattern)) {
+      return match[1].str();
+    }
+  }
+  return "";
+}
+
+std::string ApiClient::BuildApiUrl(const std::string& endpoint) {
+  return "http://" + api_address_ + endpoint;
+}
+
+/**
+ * @brief Makes an HTTP request to the Xray API endpoint.
+ * 
+ * @param endpoint API endpoint path (e.g., "/stats").
+ * @param response Output parameter for response body.
+ * 
+ * @return true if request succeeded, false otherwise.
+ * 
+ * @details Implementation:
+ * Uses WinINET API (InternetOpenUrlA) to make HTTP requests.
+ * Note: Xray API actually uses gRPC, but some endpoints may respond to HTTP.
+ */
+bool ApiClient::MakeApiRequest(const std::string& endpoint, std::string& response) {
+  std::string url = BuildApiUrl(endpoint);
+  
+  std::cerr << "ApiClient::MakeApiRequest: requesting URL: " << url << std::endl;
+
+  HINTERNET hInternet = InternetOpenA("Xray-API-Client", INTERNET_OPEN_TYPE_DIRECT, nullptr, nullptr, 0);
+  if (!hInternet) {
+    std::cerr << "InternetOpenA failed: " << GetLastError() << std::endl;
+    return false;
+  }
+  
+  HINTERNET hConnect = InternetOpenUrlA(hInternet, url.c_str(), nullptr, 0, 
+                                       INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_RELOAD, 0);
+  if (!hConnect) {
+    std::cerr << "InternetOpenUrlA failed for URL " << url << ", GetLastError=" << GetLastError() << std::endl;
+    InternetCloseHandle(hInternet);
+    return false;
+  }
+  
+  char buffer[4096];
+  DWORD bytes_read = 0;
+  response.clear();
+  
+  while (InternetReadFile(hConnect, buffer, sizeof(buffer) - 1, &bytes_read) && bytes_read > 0) {
+    buffer[bytes_read] = '\0';
+    response += buffer;
+  }
+  
+  InternetCloseHandle(hConnect);
+  InternetCloseHandle(hInternet);
+  
+  if (response.empty()) {
+    std::cerr << "ApiClient::MakeApiRequest: response empty for URL: " << url << std::endl;
+  }
+  return !response.empty();
+}
