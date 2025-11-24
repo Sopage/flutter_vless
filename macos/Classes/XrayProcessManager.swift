@@ -127,10 +127,36 @@ class XrayProcessManager {
         return true
     }
     
+    /// Get list of available network services
+    private func getNetworkServices() -> [String] {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
+        task.arguments = ["-listallnetworkservices"]
+        
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        
+        do {
+            try task.run()
+            task.waitUntilExit()
+            
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if let output = String(data: data, encoding: .utf8) {
+                return output.components(separatedBy: .newlines)
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty && !$0.contains("*") && $0 != "An asterisk (*) denotes that a network service is disabled." }
+            }
+        } catch {
+            print("Error getting network services: \(error)")
+        }
+        
+        // Fallback to common names if detection fails
+        return ["Wi-Fi", "Ethernet"]
+    }
+
     /// Set system proxy using networksetup
     private func setSystemProxy() {
-        // TODO: Detect active network service. For now, try "Wi-Fi" and "Ethernet"
-        let services = ["Wi-Fi", "Ethernet"]
+        let services = getNetworkServices()
         let port = "10808" // Default SOCKS port from config, ideally parsed
         
         for service in services {
@@ -148,12 +174,12 @@ class XrayProcessManager {
             try? enableTask.run()
             enableTask.waitUntilExit()
         }
-        print("XrayProcessManager: Attempted to set system proxy for Wi-Fi/Ethernet")
+        print("XrayProcessManager: Attempted to set system proxy for: \(services.joined(separator: ", "))")
     }
     
     /// Clear system proxy
     private func clearSystemProxy() {
-        let services = ["Wi-Fi", "Ethernet"]
+        let services = getNetworkServices()
         
         for service in services {
             let task = Process()
@@ -162,7 +188,7 @@ class XrayProcessManager {
             try? task.run()
             task.waitUntilExit()
         }
-        print("XrayProcessManager: Attempted to clear system proxy")
+        print("XrayProcessManager: Attempted to clear system proxy for: \(services.joined(separator: ", "))")
     }
     
     /// Stop Xray process
