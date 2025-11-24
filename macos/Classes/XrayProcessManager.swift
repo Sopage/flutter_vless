@@ -87,15 +87,46 @@ class XrayProcessManager {
         
         // Validate JSON config
         guard let configData = config.data(using: .utf8),
-              let _ = try? JSONSerialization.jsonObject(with: configData) else {
+              var json = try? JSONSerialization.jsonObject(with: configData) as? [String: Any] else {
             throw XrayError.invalidConfig
         }
+        
+        // Inject API config if missing
+        if json["api"] == nil {
+            NSLog("XrayProcessManager: 'api' section missing. Injecting default API config.")
+            json["api"] = [
+                "tag": "api",
+                "listen": "127.0.0.1:10085",
+                "services": ["HandlerService", "StatsService", "LoggerService"]
+            ]
+            
+            // Also ensure 'stats' object exists
+            if json["stats"] == nil {
+                json["stats"] = [:]
+            }
+            
+            // Ensure policy enables stats
+            if json["policy"] == nil {
+                 json["policy"] = [
+                    "system": [
+                        "statsInboundUplink": true,
+                        "statsInboundDownlink": true,
+                        "statsOutboundUplink": true,
+                        "statsOutboundDownlink": true
+                    ]
+                ]
+            }
+        }
+        
+        // Re-serialize config
+        let modifiedConfigData = try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted])
+        let modifiedConfig = String(data: modifiedConfigData, encoding: .utf8) ?? config
         
         // Write config to temporary file
         let tempDir = FileManager.default.temporaryDirectory
         let configFile = tempDir.appendingPathComponent("xray_config_\(UUID().uuidString).json")
         
-        try config.write(to: configFile, atomically: true, encoding: .utf8)
+        try modifiedConfig.write(to: configFile, atomically: true, encoding: .utf8)
         self.configPath = configFile
         
         // Create process
@@ -126,10 +157,12 @@ class XrayProcessManager {
         Thread.sleep(forTimeInterval: 0.5)
         
         // Initialize API client
-        self.apiClient = XrayApiClient(address: apiAddress, port: apiPort)
+        let currentApiPort = parseApiPort(config: modifiedConfig)
+        NSLog("XrayProcessManager: Connecting to API on port %d", currentApiPort)
+        self.apiClient = XrayApiClient(address: apiAddress, port: currentApiPort)
         
         // Set system proxy
-        setSystemProxy(config: config)
+        setSystemProxy(config: modifiedConfig)
         
         // Start stats monitoring
         startStatsMonitoring()
@@ -162,6 +195,17 @@ class XrayProcessManager {
         
         // Fallback to common names if detection fails
         return ["Wi-Fi", "Ethernet"]
+    }
+
+    /// Parse API port from config
+    private func parseApiPort(config: String) -> Int {
+        guard let data = config.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let api = json["api"] as? [String: Any],
+              let port = api["port"] as? Int else {
+            return 10085
+        }
+        return port
     }
 
     /// Parse SOCKS port from config
@@ -449,6 +493,12 @@ class XrayApiClient {
                 } else if let intValue = value as? Int {
                     stats[key] = Int64(intValue)
                 }
+            }
+            
+            if !stats.isEmpty {
+                NSLog("[XrayApiClient] Got stats keys: %@", stats.keys.joined(separator: ", "))
+            } else {
+                NSLog("[XrayApiClient] Got empty stats")
             }
         }.resume()
         
