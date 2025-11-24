@@ -118,15 +118,58 @@ class XrayProcessManager {
         // Initialize API client
         self.apiClient = XrayApiClient(address: apiAddress, port: apiPort)
         
+        // Set system proxy
+        setSystemProxy()
+        
         // Start stats monitoring
         startStatsMonitoring()
         
         return true
     }
     
+    /// Set system proxy using networksetup
+    private func setSystemProxy() {
+        // TODO: Detect active network service. For now, try "Wi-Fi" and "Ethernet"
+        let services = ["Wi-Fi", "Ethernet"]
+        let port = "10808" // Default SOCKS port from config, ideally parsed
+        
+        for service in services {
+            // Set SOCKS proxy
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
+            task.arguments = ["-setsocksfirewallproxy", service, "127.0.0.1", port]
+            try? task.run()
+            task.waitUntilExit()
+            
+            // Enable SOCKS proxy
+            let enableTask = Process()
+            enableTask.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
+            enableTask.arguments = ["-setsocksfirewallproxystate", service, "on"]
+            try? enableTask.run()
+            enableTask.waitUntilExit()
+        }
+        print("XrayProcessManager: Attempted to set system proxy for Wi-Fi/Ethernet")
+    }
+    
+    /// Clear system proxy
+    private func clearSystemProxy() {
+        let services = ["Wi-Fi", "Ethernet"]
+        
+        for service in services {
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
+            task.arguments = ["-setsocksfirewallproxystate", service, "off"]
+            try? task.run()
+            task.waitUntilExit()
+        }
+        print("XrayProcessManager: Attempted to clear system proxy")
+    }
+    
     /// Stop Xray process
     func stop() {
-    statsTimer?.invalidate()
+        clearSystemProxy()
+        
+        statsTimer?.invalidate()
     statsTimer = nil
 
     if let process = xrayProcess, process.isRunning {

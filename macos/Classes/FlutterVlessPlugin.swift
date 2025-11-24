@@ -237,8 +237,13 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     
     private func requestPermission(result: @escaping FlutterResult) {
         Task {
+            // Try to get VPN permission, but if it fails (e.g. no entitlements), 
+            // return true anyway to allow Proxy Mode to proceed.
             let isGranted = await packetTunnelManager?.testSaveAndLoadProfile() ?? false
-            result(isGranted)
+            if !isGranted {
+                print("VPN Permission check failed. Returning true to allow Proxy Mode.")
+            }
+            result(true)
         }
     }
     
