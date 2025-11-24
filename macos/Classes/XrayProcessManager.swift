@@ -1,68 +1,121 @@
 import Foundation
 import Combine
-import Darwin   // for kill and SIGKILL
+import Darwin // Required for low-level process control (kill, SIGKILL)
 
-/// Manages Xray-core process execution and API communication
-/// Uses Xray-core binary directly (like Windows version) instead of outdated xray-mobile framework
+/// **XrayProcessManager**
+///
+/// Manages the lifecycle and communication with the Xray-core binary on macOS.
+///
+/// **Architecture Overview:**
+/// Unlike mobile implementations that might use shared libraries, this macOS implementation
+/// manages Xray as a separate child process. This approach mimics the Windows implementation
+/// and offers several advantages:
+/// - **Stability:** If Xray crashes, it doesn't take down the main app.
+/// - **Updates:** The binary can be swapped independently of the app bundle.
+/// - **Isolation:** Clean separation of concerns between UI and core logic.
+///
+/// **Key Responsibilities:**
+/// 1. **Binary Management:** Locates, validates, and executes the `xray` binary.
+/// 2. **Configuration Injection:** Dynamically injects API and Stats configurations into the user's JSON config
+///    to ensure the app can monitor traffic and control the process, regardless of the user's settings.
+/// 3. **System Proxy Integration:** Uses `networksetup` to automatically configure macOS system proxy settings
+///    (SOCKS5) for all active network services.
+/// 4. **Statistics Monitoring:** Periodically queries the Xray API (via CLI) to retrieve real-time traffic data.
+///
+/// - Note: This class uses `Process` (NSTask) for execution and `Pipe` for IPC.
 class XrayProcessManager {
+    
+    // MARK: - Private Properties
+    
+    /// The active Xray process. `nil` if not running.
     private var xrayProcess: Process?
+    
+    /// URL to the temporary configuration file used to launch Xray.
     private var configPath: URL?
-    // private var apiClient: XrayApiClient? // Removed
+    
+    /// Set of cancellables for Combine subscriptions (if needed in future extensions).
     private var cancellables = Set<AnyCancellable>()
     
+    /// The local address for the Xray API.
     private let apiAddress = "127.0.0.1"
+    
+    /// The port used for the Xray API.
+    /// This is dynamically parsed from the config or defaults to 10085.
     private var apiPort = 10085
     
-    // Statistics
+    /// Cached path to the validated Xray binary to avoid repeated file system lookups.
+    private var xrayExecutablePath: URL?
+    
+    // MARK: - Public Statistics
+    
+    // Published properties allow SwiftUI or Combine observers to react to changes.
+    
+    /// Total bytes uploaded since the session started.
     @Published var totalUpload: Int64 = 0
+    
+    /// Total bytes downloaded since the session started.
     @Published var totalDownload: Int64 = 0
+    
+    /// Current upload speed in bytes per second.
     @Published var uploadSpeed: Int64 = 0
+    
+    /// Current download speed in bytes per second.
     @Published var downloadSpeed: Int64 = 0
     
+    // MARK: - Internal State
+    
+    /// Timer for periodic stats polling.
     private var statsTimer: Timer?
+    
+    /// Snapshot of upload bytes from the previous poll, used to calculate speed.
     private var lastUpload: Int64 = 0
+    
+    /// Snapshot of download bytes from the previous poll, used to calculate speed.
     private var lastDownload: Int64 = 0
     
-    private var xrayExecutablePath: URL?
-
-    /// Find Xray executable in common locations
+    // MARK: - Binary Management
+    
+    /// Locates the Xray executable in common locations.
+    ///
+    /// This method checks a prioritized list of paths, including the app bundle,
+    /// Application Support directory, and standard system paths.
+    ///
+    /// - Returns: A file URL to the executable if found and executable; otherwise `nil`.
     func findXrayExecutable() -> URL? {
+        // Return cached path if available and valid
         if let cached = xrayExecutablePath, FileManager.default.fileExists(atPath: cached.path) {
             return cached
         }
         
         let searchPaths = [
-            // Current directory
+            // 1. Current working directory (useful for development)
             FileManager.default.currentDirectoryPath + "/xray",
             FileManager.default.currentDirectoryPath + "/xray/xray",
             
-            // App bundle
+            // 2. App Bundle Resources (production distribution)
             Bundle.main.resourcePath?.appending("/xray") ?? "",
             Bundle.main.resourcePath?.appending("/xray/xray") ?? "",
             
-            // Application Support
+            // 3. Application Support (user-installed or updated binaries)
             FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("flutter_vless/xray").path ?? "",
             
-            // Home directory
+            // 4. User Home Directory (hidden folders)
             NSHomeDirectory() + "/.flutter_vless/xray",
             NSHomeDirectory() + "/.xray/xray",
             
-            // /usr/local/bin (if installed via Homebrew)
+            // 5. System Paths (Homebrew, etc.)
             "/usr/local/bin/xray",
             "/opt/homebrew/bin/xray",
         ]
         
         NSLog("XrayProcessManager: Starting binary search...")
+        
         for path in searchPaths {
             if path.isEmpty { continue }
             let url = URL(fileURLWithPath: path)
-            let exists = FileManager.default.fileExists(atPath: url.path)
-            // NSLog("Checking path: %@ - Exists: %@", path, String(exists))
             
-            if exists {
-                let isExec = isExecutable(url: url)
-                // NSLog("  -> Is Executable: %@", String(isExec))
-                if isExec {
+            if FileManager.default.fileExists(atPath: url.path) {
+                if isExecutable(url: url) {
                     NSLog("  -> FOUND VALID BINARY: %@", path)
                     self.xrayExecutablePath = url
                     return url
@@ -74,31 +127,48 @@ class XrayProcessManager {
         return nil
     }
     
+    /// Verifies if a file at the given URL is executable.
+    ///
+    /// - Parameter url: The file URL to check.
+    /// - Returns: `true` if the file exists and is executable.
     private func isExecutable(url: URL) -> Bool {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
               !isDirectory.boolValue else {
             return false
         }
-        
-        // Check if file is executable
         return FileManager.default.isExecutableFile(atPath: url.path)
     }
     
-    /// Start Xray with configuration
+    // MARK: - Lifecycle Management
+    
+    /// Starts the Xray process with the provided configuration.
+    ///
+    /// This method performs several critical steps:
+    /// 1. Validates the binary existence.
+    /// 2. Parses and modifies the user's JSON config to inject necessary API and Stats settings.
+    /// 3. Writes the modified config to a temporary file.
+    /// 4. Launches the Xray process.
+    /// 5. Configures the system proxy.
+    /// 6. Starts the statistics monitoring loop.
+    ///
+    /// - Parameter config: The raw JSON configuration string.
+    /// - Returns: `true` if started successfully.
+    /// - Throws: `XrayError` if startup fails.
     @discardableResult
     func start(config: String) throws -> Bool {
         guard let xrayPath = findXrayExecutable() else {
             throw XrayError.executableNotFound
         }
         
-        // Validate JSON config
+        // 1. Validate and Parse Config
         guard let configData = config.data(using: .utf8),
               var json = try? JSONSerialization.jsonObject(with: configData) as? [String: Any] else {
             throw XrayError.invalidConfig
         }
         
-        // Inject API config if missing
+        // 2. Inject API Configuration (Critical for Stats)
+        // We ensure the API section exists so we can query stats later.
         if json["api"] == nil {
             NSLog("XrayProcessManager: 'api' section missing. Injecting default API config.")
             json["api"] = [
@@ -107,12 +177,12 @@ class XrayProcessManager {
                 "services": ["HandlerService", "StatsService", "LoggerService"]
             ]
             
-            // Also ensure 'stats' object exists
+            // Ensure 'stats' object exists
             if json["stats"] == nil {
                 json["stats"] = [:]
             }
             
-            // Ensure policy enables stats
+            // Ensure policy enables stats for system traffic
             if json["policy"] == nil {
                  json["policy"] = [
                     "system": [
@@ -125,113 +195,116 @@ class XrayProcessManager {
             }
         }
         
-        // Re-serialize config
+        // 3. Serialize Modified Config
         let modifiedConfigData = try JSONSerialization.data(withJSONObject: json, options: [.prettyPrinted])
         let modifiedConfig = String(data: modifiedConfigData, encoding: .utf8) ?? config
         
-        // Write config to temporary file
+        // 4. Write to Temporary File
         let tempDir = FileManager.default.temporaryDirectory
         let configFile = tempDir.appendingPathComponent("xray_config_\(UUID().uuidString).json")
-        
         try modifiedConfig.write(to: configFile, atomically: true, encoding: .utf8)
         self.configPath = configFile
         
-        // Create process
+        // 5. Launch Process
         let process = Process()
         process.executableURL = xrayPath
         process.arguments = ["-config", configFile.path]
         
-        // Set up pipes for output
+        // Capture stdout/stderr for debugging
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = pipe
         
-        // Capture output for debugging
         pipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             if let output = String(data: data, encoding: .utf8), !output.isEmpty {
+                // Log Xray core output to Apple System Log
                 NSLog("[Xray Core]: %@", output.trimmingCharacters(in: .whitespacesAndNewlines))
             }
         }
         
-        // Launch process
         try process.run()
         self.xrayProcess = process
         
         NSLog("XrayProcessManager: Xray started with PID: %d", process.processIdentifier)
         
-        // Wait a bit for Xray to start
+        // Short delay to ensure process initializes
         Thread.sleep(forTimeInterval: 0.5)
         
-        // Initialize API client
+        // 6. Update State & System Proxy
         let currentApiPort = parseApiPort(config: modifiedConfig)
         self.apiPort = currentApiPort
         NSLog("XrayProcessManager: API port set to %d", currentApiPort)
         
-        // Set system proxy
         setSystemProxy(config: modifiedConfig)
-        
-        // Start stats monitoring
         startStatsMonitoring()
         
         return true
     }
     
-    /// Stop Xray process
+    /// Stops the Xray process and cleans up resources.
+    ///
+    /// This method ensures a clean shutdown by:
+    /// 1. Disabling the system proxy.
+    /// 2. Stopping the stats timer.
+    /// 3. Sending a termination signal to the process.
+    /// 4. Force-killing the process if it refuses to exit.
+    /// 5. Deleting the temporary configuration file.
     func stop() {
+        // 1. Clean up System Proxy
         clearSystemProxy()
         
+        // 2. Stop Monitoring
         statsTimer?.invalidate()
         statsTimer = nil
 
+        // 3. Terminate Process
         if let process = xrayProcess, process.isRunning {
-            // Politely ask the process to exit
             process.terminate()
 
-            // Wait and, if still running, force kill with SIGKILL
+            // 4. Force Kill Fallback
             let group = DispatchGroup()
             group.enter()
+            // Give it 2 seconds to exit gracefully
             DispatchQueue.global().asyncAfter(deadline: .now() + 2.0) {
                 if process.isRunning {
-                    // processIdentifier is Int32; use POSIX kill to force-kill
                     let pid = process.processIdentifier
                     if pid > 0 {
+                        NSLog("XrayProcessManager: Process unresponsive, force killing PID %d", pid)
                         _ = Darwin.kill(pid_t(pid), SIGKILL)
                     }
                 }
                 group.leave()
             }
-            // Wait for the process to exit
             process.waitUntilExit()
             group.wait()
         }
 
         xrayProcess = nil
-        // apiClient = nil
 
-        // Clean up config file
+        // 5. Cleanup Files
         if let configPath = configPath {
             try? FileManager.default.removeItem(at: configPath)
             self.configPath = nil
         }
 
-        // Reset stats
+        // 6. Reset Stats
         totalUpload = 0
         totalDownload = 0
         uploadSpeed = 0
         downloadSpeed = 0
     }
     
-    /// Check if Xray is running
+    /// Returns `true` if the Xray process is currently running.
     var isRunning: Bool {
         return xrayProcess?.isRunning ?? false
     }
     
-    /// Get Xray version
+    /// Retrieves the version string from the Xray binary.
+    ///
+    /// Executes `xray version` and parses the output.
     func getVersion() -> String? {
-        guard let xrayPath = findXrayExecutable() else {
-            return nil
-        }
+        guard let xrayPath = findXrayExecutable() else { return nil }
         
         let process = Process()
         process.executableURL = xrayPath
@@ -246,7 +319,7 @@ class XrayProcessManager {
             
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             if let output = String(data: data, encoding: .utf8) {
-                // Extract version from output (e.g., "Xray 1.8.0")
+                // Parse first line containing "Xray"
                 let lines = output.components(separatedBy: .newlines)
                 for line in lines {
                     if line.contains("Xray") || line.contains("xray") {
@@ -258,24 +331,27 @@ class XrayProcessManager {
         } catch {
             print("Error getting Xray version: \(error)")
         }
-        
         return nil
     }
     
-    /// Measure server delay
+    /// Measures latency to a target URL.
+    /// - Note: Currently a placeholder returning -1. Implementation would typically involve
+    ///         sending a request through the proxy to the target.
     func measureDelay(url: String) -> Int {
-        // TODO: Implement delay measurement via CLI or other means
+        // TODO: Implement delay measurement via CLI or direct HTTP request through proxy
         return -1
     }
     
-    /// Get connected server delay
+    /// Alias for `measureDelay`.
     func getConnectedServerDelay(url: String) -> Int {
         return measureDelay(url: url)
     }
     
-    // MARK: - Private Methods
+    // MARK: - Private Helper Methods
     
-    /// Get list of available network services
+    /// Detects available network services (e.g., "Wi-Fi", "Ethernet") using `networksetup`.
+    ///
+    /// This is crucial for correctly applying proxy settings to the active network interface.
     private func getNetworkServices() -> [String] {
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
@@ -298,16 +374,17 @@ class XrayProcessManager {
             NSLog("Error getting network services: %@", error.localizedDescription)
         }
         
-        // Fallback to common names if detection fails
-        return ["Wi-Fi", "Ethernet"]
+        return ["Wi-Fi", "Ethernet"] // Fallback
     }
 
-    /// Parse API port from config
+    /// Extracts the API port from the Xray configuration.
+    ///
+    /// Handles both integer ports and "IP:Port" string formats.
     private func parseApiPort(config: String) -> Int {
         guard let data = config.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let api = json["api"] as? [String: Any] else {
-            return 10085
+            return 10085 // Default Xray API port
         }
         
         if let port = api["port"] as? Int {
@@ -315,7 +392,7 @@ class XrayProcessManager {
         }
         
         if let listen = api["listen"] as? String {
-            // Parse "127.0.0.1:10085"
+            // Handle "127.0.0.1:10085" format
             let components = listen.components(separatedBy: ":")
             if components.count == 2, let port = Int(components[1]) {
                 return port
@@ -325,20 +402,23 @@ class XrayProcessManager {
         return 10085
     }
 
-    /// Parse SOCKS port from config
+    /// Extracts the SOCKS inbound port from the configuration.
+    ///
+    /// Looks for an inbound with tag "in_proxy" or protocol "socks".
     private func parseSocksPort(config: String) -> String {
         guard let data = config.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let inbounds = json["inbounds"] as? [[String: Any]] else {
-            return "10808"
+            return "10808" // Default SOCKS port
         }
         
-        // Try to find inbound with tag "in_proxy" or protocol "socks"
         for inbound in inbounds {
+            // Prioritize by tag
             if let tag = inbound["tag"] as? String, tag == "in_proxy",
                let port = inbound["port"] as? Int {
                 return String(port)
             }
+            // Fallback to protocol
             if let protocolName = inbound["protocol"] as? String, protocolName == "socks",
                let port = inbound["port"] as? Int {
                 return String(port)
@@ -348,7 +428,9 @@ class XrayProcessManager {
         return "10808"
     }
 
-    /// Set system proxy using networksetup
+    /// Configures the macOS system proxy settings using `networksetup`.
+    ///
+    /// Sets the SOCKS proxy and bypass domains for all detected network services.
     private func setSystemProxy(config: String) {
         let services = getNetworkServices()
         let port = parseSocksPort(config: config)
@@ -356,21 +438,21 @@ class XrayProcessManager {
         NSLog("XrayProcessManager: Setting system proxy to port %@", port)
         
         for service in services {
-            // Set SOCKS proxy
+            // 1. Set SOCKS Proxy Host/Port
             let task = Process()
             task.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
             task.arguments = ["-setsocksfirewallproxy", service, "127.0.0.1", port]
             try? task.run()
             task.waitUntilExit()
             
-            // Enable SOCKS proxy
+            // 2. Enable SOCKS Proxy
             let enableTask = Process()
             enableTask.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
             enableTask.arguments = ["-setsocksfirewallproxystate", service, "on"]
             try? enableTask.run()
             enableTask.waitUntilExit()
             
-            // Set bypass domains (localhost, 127.0.0.1, etc.)
+            // 3. Configure Bypass Domains (Localhost, LAN, etc.)
             let bypassTask = Process()
             bypassTask.executableURL = URL(fileURLWithPath: "/usr/sbin/networksetup")
             bypassTask.arguments = ["-setproxybypassdomains", service, "localhost", "127.0.0.1", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"]
@@ -380,7 +462,7 @@ class XrayProcessManager {
         NSLog("XrayProcessManager: Attempted to set system proxy for: %@", services.joined(separator: ", "))
     }
     
-    /// Clear system proxy
+    /// Disables the system proxy settings.
     private func clearSystemProxy() {
         let services = getNetworkServices()
         
@@ -394,24 +476,29 @@ class XrayProcessManager {
         NSLog("XrayProcessManager: Attempted to clear system proxy for: %@", services.joined(separator: ", "))
     }
     
+    // MARK: - Statistics Logic
+    
+    /// Starts the periodic timer to query traffic statistics.
     private func startStatsMonitoring() {
         statsTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             self?.updateStats()
         }
     }
     
+    /// Queries the Xray API for current traffic statistics.
+    ///
+    /// Uses the `xray api statsquery` CLI command to retrieve JSON stats.
+    /// Parses the JSON to calculate total upload and download usage.
     private func updateStats() {
         guard let xrayPath = findXrayExecutable() else {
             NSLog("XrayProcessManager: Cannot update stats - binary not found")
             return
         }
         
-        // Use xray api statsquery to get stats
-        // Command: xray api statsquery --server=127.0.0.1:10085
-        
+        // Execute: xray api statsquery --server=127.0.0.1:<port> ""
         let task = Process()
         task.executableURL = xrayPath
-        // Add empty string pattern to match all stats
+        // The empty string argument "" is a pattern to match ALL stats
         task.arguments = ["api", "statsquery", "--server=127.0.0.1:\(apiPort)", ""]
         
         let pipe = Pipe()
@@ -420,21 +507,21 @@ class XrayProcessManager {
         task.standardError = errorPipe
         
         do {
-            // NSLog("XrayProcessManager: Running stats query...")
             try task.run()
             task.waitUntilExit()
             
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
             let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
             
+            // Log errors if any
             if let errorOutput = String(data: errorData, encoding: .utf8), !errorOutput.isEmpty {
                 NSLog("XrayProcessManager: Stats query error: %@", errorOutput)
             }
             
             guard let output = String(data: data, encoding: .utf8) else { return }
             
-            // Parse JSON output
-            // Format: { "stat": [ { "name": "...", "value": 123 }, ... ] }
+            // Parse JSON Output
+            // Expected Format: { "stat": [ { "name": "...", "value": 123 }, ... ] }
             
             var currentUpload: Int64 = 0
             var currentDownload: Int64 = 0
@@ -449,8 +536,10 @@ class XrayProcessManager {
                         continue
                     }
                     
-                    // Only count outbound traffic to avoid double counting (inbound + outbound)
-                    // Exclude blackhole (blocked) traffic
+                    // Filter Logic:
+                    // 1. We only care about "outbound" traffic to measure what's leaving the device.
+                    // 2. We exclude "blackhole" (blocked) traffic.
+                    // 3. We differentiate between "uplink" (upload) and "downlink" (download).
                     if name.hasPrefix("outbound>>>") && !name.contains("blackhole") {
                         if name.hasSuffix(">>>uplink") {
                             currentUpload += value
@@ -461,15 +550,18 @@ class XrayProcessManager {
                 }
             }
             
-            // Calculate speeds
+            // Calculate Real-time Speed (Bytes/Second)
+            // Speed = (Current Total - Last Total) / Time Interval (1s)
             if lastUpload > 0 || lastDownload > 0 {
                 uploadSpeed = max(0, currentUpload - lastUpload)
                 downloadSpeed = max(0, currentDownload - lastDownload)
             }
             
+            // Update Published Properties
             totalUpload = currentUpload
             totalDownload = currentDownload
             
+            // Update Snapshots for Next Cycle
             lastUpload = currentUpload
             lastDownload = currentDownload
             
@@ -479,7 +571,7 @@ class XrayProcessManager {
     }
 }
 
-// MARK: - Errors
+// MARK: - Error Definitions
 
 enum XrayError: LocalizedError {
     case executableNotFound
@@ -490,13 +582,13 @@ enum XrayError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .executableNotFound:
-            return "Xray executable not found. Please download Xray-core from https://github.com/XTLS/Xray-core/releases"
+            return "Xray executable not found. Please ensure the binary is placed in ~/.flutter_vless/xray"
         case .invalidConfig:
-            return "Invalid Xray configuration JSON"
+            return "Invalid Xray configuration JSON provided."
         case .processStartFailed:
-            return "Failed to start Xray process"
+            return "Failed to start the Xray process."
         case .apiConnectionFailed:
-            return "Failed to connect to Xray API"
+            return "Failed to connect to the Xray API."
         }
     }
 }
