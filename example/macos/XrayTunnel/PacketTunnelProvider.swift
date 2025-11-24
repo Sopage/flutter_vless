@@ -1,11 +1,3 @@
-//
-//  PacketTunnelProvider.swift
-//  XrayTunnel
-//
-//  Created by Vladimir Khudiakov on 17.08.2025. https://tfox.dev.
-//  Updated 2025: Uses Xray-core binary directly (v25.10.15+) instead of outdated xray-mobile framework
-//
-
 import NetworkExtension
 import Tun2SocksKit
 import os

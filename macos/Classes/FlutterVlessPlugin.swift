@@ -6,6 +6,7 @@ import Combine
 public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     
     private var packetTunnelManager: PacketTunnelManager? = nil
+    private var xrayProcessManager: XrayProcessManager? = nil
     
     private var timer: Timer?
     private var eventSink: FlutterEventSink?
@@ -13,6 +14,8 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     private var totalDownload: Int = 0
     private var uploadSpeed: Int = 0
     private var downloadSpeed: Int = 0
+    
+    private var isProxyMode: Bool = false
     
     public static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(name: "flutter_vless", binaryMessenger: registrar.messenger)
@@ -44,24 +47,45 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     
     private func startTimer() {
         self.timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true, block: { _ in
-            let elapsed = Date().timeIntervalSince(self.packetTunnelManager?.connectedDate ?? Date())
+            let elapsed: TimeInterval
+            if self.isProxyMode {
+                // In proxy mode, we don't have a connectedDate from VPN manager, so we just use current time vs start time if we tracked it,
+                // or just 0 for now as XrayProcessManager doesn't expose start time publicly yet.
+                // For simplicity, we'll just send "CONNECTED" state.
+                // TODO: Track start time in XrayProcessManager or here.
+                elapsed = 0 // Placeholder
+            } else {
+                elapsed = Date().timeIntervalSince(self.packetTunnelManager?.connectedDate ?? Date())
+            }
+            
             let seconds = Int(elapsed)
-            self.eventSink?(["\(seconds)", "\(self.uploadSpeed)", "\(self.downloadSpeed)", "\(self.totalUpload)", "\(self.totalDownload)", "CONNECTED"])
-            Task{
-                do{
-                    let response =  try await self.packetTunnelManager?.sendProviderMessage(data: "xray_traffic".data(using: .utf8)!)
-                    if response != nil{
-                        let traffic = String(decoding: response!, as: UTF8.self)
-                        let parts = traffic.split(separator: ",")
-                        if let up = Int(parts[0]), let down = Int(parts[1]) {
-                            self.uploadSpeed = up - self.totalUpload
-                            self.downloadSpeed = down - self.totalDownload
-                            self.totalUpload = up
-                            self.totalDownload = down
+            
+            if self.isProxyMode {
+                 if let manager = self.xrayProcessManager {
+                     self.uploadSpeed = Int(manager.uploadSpeed)
+                     self.downloadSpeed = Int(manager.downloadSpeed)
+                     self.totalUpload = Int(manager.totalUpload)
+                     self.totalDownload = Int(manager.totalDownload)
+                 }
+                 self.eventSink?(["\(seconds)", "\(self.uploadSpeed)", "\(self.downloadSpeed)", "\(self.totalUpload)", "\(self.totalDownload)", "CONNECTED"])
+            } else {
+                self.eventSink?(["\(seconds)", "\(self.uploadSpeed)", "\(self.downloadSpeed)", "\(self.totalUpload)", "\(self.totalDownload)", "CONNECTED"])
+                Task{
+                    do{
+                        let response =  try await self.packetTunnelManager?.sendProviderMessage(data: "xray_traffic".data(using: .utf8)!)
+                        if response != nil{
+                            let traffic = String(decoding: response!, as: UTF8.self)
+                            let parts = traffic.split(separator: ",")
+                            if let up = Int(parts[0]), let down = Int(parts[1]) {
+                                self.uploadSpeed = up - self.totalUpload
+                                self.downloadSpeed = down - self.totalDownload
+                                self.totalUpload = up
+                                self.totalDownload = down
+                            }
                         }
+                    }catch{
+                        print("Error in traffic: \(error.localizedDescription)")
                     }
-                }catch{
-                    print("Error in traffic: \(error.localizedDescription)")
                 }
             }
         })
@@ -99,7 +123,13 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     }
     
     private func stopVless(result: FlutterResult) {
-        packetTunnelManager?.stop()
+        if isProxyMode {
+            xrayProcessManager?.stop()
+            xrayProcessManager = nil
+            isProxyMode = false
+        } else {
+            packetTunnelManager?.stop()
+        }
         stopTimer()
         result(nil)
     }
@@ -110,6 +140,17 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
             result(FlutterError(code: "INVALID_ARGUMENTS", message: "Invalid arguments for getConnectedServerDelay.", details: nil))
             return
         }
+        
+        if isProxyMode {
+             if let manager = xrayProcessManager {
+                 let delay = manager.getConnectedServerDelay(url: url)
+                 result(delay)
+             } else {
+                 result(-1)
+             }
+             return
+        }
+        
         Task {
             do {
                 let delay = try await packetTunnelManager?.sendProviderMessage(data: "xray_delay\(url)".data(using: .utf8)!) ?? "-1".data(using: .utf8)!
@@ -152,6 +193,29 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
             result(FlutterError(code: "INVALID_ARGUMENTS", message: "Invalid arguments for startVless.", details: nil))
             return
         }
+        
+        let proxyOnly = arguments["proxy_only"] as? Bool ?? false
+        self.isProxyMode = proxyOnly
+        
+        if proxyOnly {
+            print("Starting in Proxy Mode (No VPN)...")
+            let manager = XrayProcessManager()
+            self.xrayProcessManager = manager
+            
+            do {
+                try manager.start(config: config)
+                result(nil)
+                startTimer()
+            } catch {
+                result(FlutterError(code: "PROXY_ERROR",
+                                    message: "Failed to start Proxy: \(error.localizedDescription)",
+                                    details: nil))
+                self.xrayProcessManager = nil
+                self.isProxyMode = false
+            }
+            return
+        }
+        
         packetTunnelManager?.remark = remark
         packetTunnelManager?.xrayConfig = configData
         Task {

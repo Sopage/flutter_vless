@@ -46,13 +46,24 @@ class XrayProcessManager {
             "/opt/homebrew/bin/xray",
         ]
         
+        print("XrayProcessManager: Starting binary search...")
         for path in searchPaths {
+            if path.isEmpty { continue }
             let url = URL(fileURLWithPath: path)
-            if FileManager.default.fileExists(atPath: url.path) && isExecutable(url: url) {
-                return url
+            let exists = FileManager.default.fileExists(atPath: url.path)
+            print("Checking path: \(path) - Exists: \(exists)")
+            
+            if exists {
+                let isExec = isExecutable(url: url)
+                print("  -> Is Executable: \(isExec)")
+                if isExec {
+                    print("  -> FOUND VALID BINARY: \(path)")
+                    return url
+                }
             }
         }
         
+        print("XrayProcessManager: Xray binary NOT found in any search path.")
         return nil
     }
     
@@ -343,7 +354,7 @@ class XrayApiClient {
     
     /// Measure delay through Xray
     func measureDelay(url: String) -> Int {
-        guard let apiURL = URL(string: "\(baseURL)/api/stats?reset=false") else {
+        guard let _ = URL(string: "\(baseURL)/api/stats?reset=false") else {
             return -1
         }
         
