@@ -46,24 +46,24 @@ class XrayProcessManager {
             "/opt/homebrew/bin/xray",
         ]
         
-        print("XrayProcessManager: Starting binary search...")
+        NSLog("XrayProcessManager: Starting binary search...")
         for path in searchPaths {
             if path.isEmpty { continue }
             let url = URL(fileURLWithPath: path)
             let exists = FileManager.default.fileExists(atPath: url.path)
-            print("Checking path: \(path) - Exists: \(exists)")
+            NSLog("Checking path: %@ - Exists: %@", path, String(exists))
             
             if exists {
                 let isExec = isExecutable(url: url)
-                print("  -> Is Executable: \(isExec)")
+                NSLog("  -> Is Executable: %@", String(isExec))
                 if isExec {
-                    print("  -> FOUND VALID BINARY: \(path)")
+                    NSLog("  -> FOUND VALID BINARY: %@", path)
                     return url
                 }
             }
         }
         
-        print("XrayProcessManager: Xray binary NOT found in any search path.")
+        NSLog("XrayProcessManager: Xray binary NOT found in any search path.")
         return nil
     }
     
@@ -108,9 +108,19 @@ class XrayProcessManager {
         process.standardOutput = pipe
         process.standardError = pipe
         
+        // Capture output for debugging
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if let output = String(data: data, encoding: .utf8), !output.isEmpty {
+                NSLog("[Xray Core]: %@", output.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+        }
+        
         // Launch process
         try process.run()
         self.xrayProcess = process
+        
+        NSLog("XrayProcessManager: Xray started with PID: %d", process.processIdentifier)
         
         // Wait a bit for Xray to start
         Thread.sleep(forTimeInterval: 0.5)
@@ -119,7 +129,7 @@ class XrayProcessManager {
         self.apiClient = XrayApiClient(address: apiAddress, port: apiPort)
         
         // Set system proxy
-        setSystemProxy()
+        setSystemProxy(config: config)
         
         // Start stats monitoring
         startStatsMonitoring()
@@ -147,17 +157,42 @@ class XrayProcessManager {
                     .filter { !$0.isEmpty && !$0.contains("*") && $0 != "An asterisk (*) denotes that a network service is disabled." }
             }
         } catch {
-            print("Error getting network services: \(error)")
+            NSLog("Error getting network services: %@", error.localizedDescription)
         }
         
         // Fallback to common names if detection fails
         return ["Wi-Fi", "Ethernet"]
     }
 
+    /// Parse SOCKS port from config
+    private func parseSocksPort(config: String) -> String {
+        guard let data = config.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let inbounds = json["inbounds"] as? [[String: Any]] else {
+            return "10808"
+        }
+        
+        // Try to find inbound with tag "in_proxy" or protocol "socks"
+        for inbound in inbounds {
+            if let tag = inbound["tag"] as? String, tag == "in_proxy",
+               let port = inbound["port"] as? Int {
+                return String(port)
+            }
+            if let protocolName = inbound["protocol"] as? String, protocolName == "socks",
+               let port = inbound["port"] as? Int {
+                return String(port)
+            }
+        }
+        
+        return "10808"
+    }
+
     /// Set system proxy using networksetup
-    private func setSystemProxy() {
+    private func setSystemProxy(config: String) {
         let services = getNetworkServices()
-        let port = "10808" // Default SOCKS port from config, ideally parsed
+        let port = parseSocksPort(config: config)
+        
+        NSLog("XrayProcessManager: Setting system proxy to port %@", port)
         
         for service in services {
             // Set SOCKS proxy
@@ -174,7 +209,7 @@ class XrayProcessManager {
             try? enableTask.run()
             enableTask.waitUntilExit()
         }
-        print("XrayProcessManager: Attempted to set system proxy for: \(services.joined(separator: ", "))")
+        NSLog("XrayProcessManager: Attempted to set system proxy for: %@", services.joined(separator: ", "))
     }
     
     /// Clear system proxy
@@ -188,7 +223,7 @@ class XrayProcessManager {
             try? task.run()
             task.waitUntilExit()
         }
-        print("XrayProcessManager: Attempted to clear system proxy for: \(services.joined(separator: ", "))")
+        NSLog("XrayProcessManager: Attempted to clear system proxy for: %@", services.joined(separator: ", "))
     }
     
     /// Stop Xray process
