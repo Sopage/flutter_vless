@@ -43,6 +43,10 @@ class XrayProcessManager {
     /// This is dynamically parsed from the config or defaults to 10085.
     private var apiPort = 10085
     
+    /// The SOCKS5 port used for the local proxy.
+    /// This is dynamically parsed from the config or defaults to 10808.
+    private var socksPort = 10808
+    
     /// Cached path to the validated Xray binary to avoid repeated file system lookups.
     private var xrayExecutablePath: URL?
     
@@ -236,6 +240,10 @@ class XrayProcessManager {
         self.apiPort = currentApiPort
         NSLog("XrayProcessManager: API port set to %d", currentApiPort)
         
+        let currentSocksPort = parseSocksPort(config: modifiedConfig)
+        self.socksPort = Int(currentSocksPort) ?? 10808
+        NSLog("XrayProcessManager: SOCKS port set to %d", self.socksPort)
+        
         setSystemProxy(config: modifiedConfig)
         startStatsMonitoring()
         
@@ -335,11 +343,68 @@ class XrayProcessManager {
     }
     
     /// Measures latency to a target URL.
-    /// - Note: Currently a placeholder returning -1. Implementation would typically involve
-    ///         sending a request through the proxy to the target.
+    ///
+    /// Performs an HTTP HEAD request to the specified URL.
+    /// - If Xray is running, the request is routed through the local SOCKS5 proxy.
+    /// - If Xray is not running, the request is sent directly.
+    ///
+    /// - Parameter url: The target URL string (e.g., "https://www.google.com").
+    /// - Returns: The latency in milliseconds, or -1 if the request fails.
     func measureDelay(url: String) -> Int {
-        // TODO: Implement delay measurement via CLI or direct HTTP request through proxy
-        return -1
+        guard let targetUrl = URL(string: url) else {
+            NSLog("XrayProcessManager: Invalid URL for delay check: %@", url)
+            return -1
+        }
+        
+        var request = URLRequest(url: targetUrl)
+        request.httpMethod = "HEAD"
+        request.timeoutInterval = 3.0
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 3.0
+        config.timeoutIntervalForResource = 3.0
+        
+        // If Xray is running, route through the SOCKS5 proxy
+        if isRunning {
+            NSLog("XrayProcessManager: Measuring delay through SOCKS5 proxy at 127.0.0.1:%d to %@", socksPort, url)
+            config.connectionProxyDictionary = [
+                kCFStreamPropertySOCKSProxyHost: "127.0.0.1",
+                kCFStreamPropertySOCKSProxyPort: socksPort,
+                kCFStreamPropertySOCKSVersion: kCFStreamSocketSOCKSVersion5
+            ]
+        } else {
+             NSLog("XrayProcessManager: Measuring direct delay to %@", url)
+        }
+        
+        let session = URLSession(configuration: config)
+        let group = DispatchGroup()
+        var latency: Int = -1
+        
+        group.enter()
+        let startTime = CFAbsoluteTimeGetCurrent()
+        
+        let task = session.dataTask(with: request) { _, response, error in
+            defer { group.leave() }
+            
+            if let error = error {
+                NSLog("XrayProcessManager: Delay check failed: %@", error.localizedDescription)
+                return
+            }
+            
+            if let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode) {
+                let duration = CFAbsoluteTimeGetCurrent() - startTime
+                latency = Int(duration * 1000)
+                // NSLog("XrayProcessManager: Delay success: %d ms (Status: %d)", latency, httpResponse.statusCode)
+            }
+        }
+        
+        task.resume()
+        
+        // Wait for max 3 seconds
+        _ = group.wait(timeout: .now() + 3.0)
+        
+        return latency
     }
     
     /// Alias for `measureDelay`.
