@@ -90,6 +90,7 @@ class V2rayManager {
   void GetTrafficStats(int64_t& upload, int64_t& download);
 
  private:
+  friend struct ApiClient;
   void RunV2ray();
   bool StartXrayProcess(const std::string& config_path);
   void StopXrayProcess();
@@ -274,17 +275,15 @@ struct ApiClient {
   int api_port_ = 10085;     ///< API server port (default: 10085)
   
   /**
-   * @brief Retrieves traffic statistics from Xray API.
+   * @brief Retrieves traffic statistics from Xray API via CLI.
    * 
    * @param stats Output map of statistic names to values.
    * 
    * @return true if statistics were retrieved successfully, false otherwise.
    * 
-   * @details Statistics Format:
-   * Xray returns statistics in format:
-   * "inbound>>>tag>>>traffic>>>uplink" and "inbound>>>tag>>>traffic>>>downlink"
-   * 
-   * The function parses these and aggregates upload/download totals.
+   * @details Implementation:
+   * Executes `xray.exe api statsquery` to get all statistics.
+   * Parses the output line by line.
    */
   bool GetStats(std::map<std::string, int64_t>& stats);
   
@@ -294,10 +293,6 @@ struct ApiClient {
    * @param url URL to test (typically a simple HTTP endpoint like google.com).
    * 
    * @return Delay in milliseconds, or -1 on error.
-   * 
-   * @details Implementation:
-   * Makes an HTTP request through the system proxy (which routes through Xray)
-   * and measures the time taken. This provides end-to-end latency measurement.
    */
   int MeasureDelay(const std::string& url);
   
@@ -310,27 +305,19 @@ struct ApiClient {
   
  private:
   /**
-   * @brief Makes an HTTP request to the Xray API endpoint.
+   * @brief Executes an Xray API command via CLI.
    * 
-   * @param endpoint API endpoint path (e.g., "/stats").
-   * @param response Output parameter for response body.
+   * @param args Command line arguments (e.g., "api statsquery ...").
+   * @param output Output string to store the command result.
    * 
-   * @return true if request succeeded, false otherwise.
-   * 
-   * @details Implementation:
-   * Uses WinINET API (InternetOpenUrlA) to make HTTP requests.
-   * Note: Xray API actually uses gRPC, but some endpoints may respond to HTTP.
+   * @return true if command executed successfully, false otherwise.
    */
-  bool MakeApiRequest(const std::string& endpoint, std::string& response);
+  bool RunXrayApiCommand(const std::string& args, std::string& output);
   
-  /**
-   * @brief Builds full API URL from endpoint path.
-   * 
-   * @param endpoint API endpoint path.
-   * 
-   * @return Full URL (e.g., "http://127.0.0.1:10085/stats").
-   */
-  std::string BuildApiUrl(const std::string& endpoint);
+  // Reference to the manager to access executable path
+  V2rayManager* manager_ = nullptr;
+  
+  friend class V2rayManager;
 };
 
 #endif  // V2RAY_MANAGER_H_

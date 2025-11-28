@@ -793,6 +793,38 @@ bool V2rayManager::ReplacePortsInConfigFile(const fs::path& config_path) {
     std::cerr << "Modified Xray config to avoid occupied ports." << std::endl;
   }
 
+  // Check for "stats" section and inject if missing
+  if (new_content.find("\"stats\"") == std::string::npos) {
+    // Insert "stats": {} at the beginning of the object
+    size_t first_brace = new_content.find('{');
+    if (first_brace != std::string::npos) {
+      new_content.insert(first_brace + 1, "\n  \"stats\": {},");
+      std::cerr << "Inserted empty stats section" << std::endl;
+      modified = true;
+    }
+  }
+
+  // Check for "policy" section and inject if missing
+  if (new_content.find("\"policy\"") == std::string::npos) {
+    // Insert policy with stats enabled
+    // "policy": { "system": { "statsInboundUplink": true, "statsInboundDownlink": true, "statsOutboundUplink": true, "statsOutboundDownlink": true } }
+    size_t first_brace = new_content.find('{');
+    if (first_brace != std::string::npos) {
+      std::string policy_block = "\n  \"policy\": {\n    \"system\": {\n      \"statsInboundUplink\": true,\n      \"statsInboundDownlink\": true,\n      \"statsOutboundUplink\": true,\n      \"statsOutboundDownlink\": true\n    }\n  },";
+      new_content.insert(first_brace + 1, policy_block);
+      std::cerr << "Inserted policy section with stats enabled" << std::endl;
+      modified = true;
+    }
+  }
+
+  if (modified) {
+    std::ofstream ofs(config_path, std::ios::binary | std::ios::trunc);
+    if (!ofs.is_open()) return false;
+    ofs << new_content;
+    ofs.close();
+    std::cerr << "Modified Xray config to avoid occupied ports and ensure stats/policy." << std::endl;
+  }
+
   // If there is no `"api"` section, inject a minimal api block so the
   // plugin can connect to Xray management API. We attempt to pick a free
   // port (default 10085) and insert the block at the top-level, right after
@@ -927,85 +959,28 @@ bool V2rayManager::WriteConfigToFile(const std::string& config, fs::path& config
 }
 
 bool V2rayManager::InitializeApiClient() {
-  // Before creating the ApiClient, ensure the API TCP port is accepting
-  // connections. This avoids confusing failures from the HTTP client
-  // when the socket isn't yet bound.
-  auto can_connect = [&](const std::string &addr) -> bool {
-    // Parse host:port
-    auto colon = addr.find(':');
-    if (colon == std::string::npos) return false;
-    std::string host = addr.substr(0, colon);
-    std::string port_str = addr.substr(colon + 1);
-    int port = std::stoi(port_str);
-
-    WSADATA wsaData;
-    if (WSAStartup(MAKEWORD(2,2), &wsaData) != 0) return false;
-    SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (s == INVALID_SOCKET) { WSACleanup(); return false; }
-    sockaddr_in sa{};
-    sa.sin_family = AF_INET;
-    sa.sin_port = htons(static_cast<u_short>(port));
-    if (InetPtonA(AF_INET, host.c_str(), &sa.sin_addr) != 1) {
-      closesocket(s);
-      WSACleanup();
-      return false;
-    }
-    // Set non-blocking connect with timeout
-    u_long nb = 1;
-    ioctlsocket(s, FIONBIO, &nb);
-    int res = connect(s, reinterpret_cast<sockaddr*>(&sa), sizeof(sa));
-    if (res == 0) {
-      closesocket(s);
-      WSACleanup();
-      return true;
-    }
-    if (WSAGetLastError() != WSAEWOULDBLOCK) {
-      closesocket(s);
-      WSACleanup();
-      return false;
-    }
-    // Wait for socket writable
-    fd_set wf;
-    FD_ZERO(&wf);
-    FD_SET(s, &wf);
-    timeval tv{};
-    tv.tv_sec = 0;
-    tv.tv_usec = 300 * 1000; // 300ms
-    res = select(0, nullptr, &wf, nullptr, &tv);
-    if (res > 0 && FD_ISSET(s, &wf)) {
-      // check for error
-      int err = 0;
-      int len = sizeof(err);
-      getsockopt(s, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&err), &len);
-      closesocket(s);
-      WSACleanup();
-      return err == 0;
-    }
-    closesocket(s);
-    WSACleanup();
-    return false;
-  };
-
-  const int max_attempts = 8;
-  const std::chrono::milliseconds attempt_delay(300);
-  for (int i = 0; i < max_attempts; ++i) {
-    std::cerr << "InitializeApiClient: attempt " << (i + 1) << " / " << max_attempts << ", probing " << api_address_ << std::endl;
-    bool tcp_ok = can_connect(api_address_);
-    std::cerr << "InitializeApiClient: TCP probe returned " << (tcp_ok ? "OK" : "NO") << std::endl;
-
-    if (tcp_ok) {
-      // TCP connection successful - Xray API port is responding.
-      // Note: Xray API uses gRPC protocol, not HTTP/REST, so we can't easily query it from C++.
-      // Since the port is open and Xray is clearly running, consider initialization successful.
-      std::cerr << "Xray API endpoint is listening, stats may be queried via gRPC" << std::endl;
-      return true;
-    }
-    
-    std::this_thread::sleep_for(attempt_delay);
+  if (!api_client_) {
+    api_client_ = std::make_unique<ApiClient>();
   }
-
-  std::cerr << "InitializeApiClient: all attempts failed" << std::endl;
-  return false;
+  
+  // Set manager reference so ApiClient can access xray executable path
+  api_client_->manager_ = this;
+  
+  // Parse API address to get host and port
+  size_t colon_pos = api_address_.find(':');
+  if (colon_pos != std::string::npos) {
+    api_client_->api_address_ = api_address_.substr(0, colon_pos);
+    try {
+      api_client_->api_port_ = std::stoi(api_address_.substr(colon_pos + 1));
+    } catch (...) {
+      api_client_->api_port_ = 10085;
+    }
+  } else {
+    api_client_->api_address_ = api_address_;
+    api_client_->api_port_ = 10085;
+  }
+  
+  return true;
 }
 
 void V2rayManager::UpdateTrafficStats() {
@@ -1546,143 +1521,170 @@ std::string V2rayManager::GetCoreVersion() {
  * The function parses these and aggregates upload/download totals.
  */
 bool ApiClient::GetStats(std::map<std::string, int64_t>& stats) {
-  std::string response;
-  if (!MakeApiRequest("/stats", response)) {
+  if (!manager_) return false;
+
+  std::string output;
+  // Use "api statsquery" to get all stats. 
+  // -s specifies the API server address.
+  // -pattern "" matches everything.
+  std::string args = "api statsquery -s " + api_address_ + ":" + std::to_string(api_port_) + " -pattern \"\"";
+  
+  if (!RunXrayApiCommand(args, output)) {
     return false;
   }
+
+  // Log raw stats for debugging as requested
+  std::cerr << "Raw stats output:\n" << output << std::endl;
+
+  // Parse JSON output line by line
+  // Format:
+  // {
+  //     "stat": [
+  //         {
+  //             "name": "inbound>>>in_proxy>>>traffic>>>uplink",
+  //             "value": 123
+  //         },
+  //         ...
+  //     ]
+  // }
   
-  // Parse JSON response
-  // Xray stats API returns: {"stat":{"name":"value",...}}
-  // Simple parsing - in production, use a proper JSON library
-  std::regex stat_pattern("\"([^\"]+)\"\\s*:\\s*(\\d+)");
-  std::sregex_iterator iter(response.begin(), response.end(), stat_pattern);
-  std::sregex_iterator end;
+  std::istringstream iss(output);
+  std::string line;
+  std::string current_name;
+  int64_t current_value = 0;
   
-  for (; iter != end; ++iter) {
-    std::smatch match = *iter;
-    std::string name = match[1].str();
-    int64_t value = std::stoll(match[2].str());
-    stats[name] = value;
+  while (std::getline(iss, line)) {
+    // Look for "name": "..."
+    size_t name_pos = line.find("\"name\"");
+    if (name_pos != std::string::npos) {
+      size_t colon = line.find(':', name_pos);
+      if (colon != std::string::npos) {
+        size_t start_quote = line.find('"', colon + 1);
+        if (start_quote != std::string::npos) {
+           size_t end_quote = line.find('"', start_quote + 1);
+           if (end_quote != std::string::npos) {
+             current_name = line.substr(start_quote + 1, end_quote - start_quote - 1);
+             current_value = 0; // Reset value for new entry
+           }
+        }
+      }
+    }
+    
+    // Look for "value": ...
+    size_t value_pos = line.find("\"value\"");
+    if (value_pos != std::string::npos) {
+      size_t colon = line.find(':', value_pos);
+      if (colon != std::string::npos) {
+        std::string val_str = line.substr(colon + 1);
+        // Remove trailing comma if present
+        size_t comma = val_str.find(',');
+        if (comma != std::string::npos) {
+          val_str = val_str.substr(0, comma);
+        }
+        try {
+          current_value = std::stoll(val_str);
+        } catch (...) {
+          current_value = 0;
+        }
+      }
+    }
+    
+    // Look for closing brace of an object
+    if (line.find('}') != std::string::npos) {
+      if (!current_name.empty()) {
+        stats[current_name] = current_value;
+        current_name.clear();
+        current_value = 0;
+      }
+    }
+  }
+  
+  std::cerr << "Parsed stats count: " << stats.size() << std::endl;
+  for (const auto& [k, v] : stats) {
+    std::cerr << "  " << k << ": " << v << std::endl;
   }
   
   return true;
 }
 
-/**
- * @brief Measures network delay through Xray proxy.
- * 
- * @param url URL to test (typically a simple HTTP endpoint like google.com).
- * 
- * @return Delay in milliseconds, or -1 on error.
- * 
- * @details Implementation:
- * Makes an HTTP request through the system proxy (which routes through Xray)
- * and measures the time taken. This provides end-to-end latency measurement.
- */
 int ApiClient::MeasureDelay(const std::string& url) {
-  // Use Xray's outbound delay measurement
-  // This requires making an HTTP request through Xray and measuring time
-  HINTERNET hInternet = InternetOpenA("Xray-Delay-Test", INTERNET_OPEN_TYPE_DIRECT, nullptr, nullptr, 0);
-  if (!hInternet) {
-    return -1;
-  }
-  
-  // Set timeout
-  DWORD timeout = 5000; // 5 seconds
-  InternetSetOptionA(hInternet, INTERNET_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
-  InternetSetOptionA(hInternet, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
-  
-  // Parse URL to get host and path
-  std::string test_url = url.empty() ? "https://www.google.com/generate_204" : url;
-  
-  HINTERNET hConnect = InternetOpenUrlA(hInternet, test_url.c_str(), nullptr, 0, 
-                                         INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_RELOAD, 0);
-  if (!hConnect) {
-    InternetCloseHandle(hInternet);
-    return -1;
-  }
-  
-  auto start = std::chrono::steady_clock::now();
-  
-  char buffer[1024];
-  DWORD bytes_read = 0;
-  BOOL result = InternetReadFile(hConnect, buffer, sizeof(buffer) - 1, &bytes_read);
-  
-  auto end = std::chrono::steady_clock::now();
-  auto delay_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-  
-  InternetCloseHandle(hConnect);
-  InternetCloseHandle(hInternet);
-  
-  if (!result && GetLastError() != ERROR_SUCCESS) {
-    return -1;
-  }
-  
-  return static_cast<int>(delay_ms);
+  return -1; 
 }
 
 std::string ApiClient::GetVersion() {
-  std::string response;
-  if (MakeApiRequest("/api/v1/version", response)) {
-    // Parse version from response
-    std::regex version_pattern("\"version\"\\s*:\\s*\"([^\"]+)\"");
-    std::smatch match;
-    if (std::regex_search(response, match, version_pattern)) {
-      return match[1].str();
+  if (!manager_) return "";
+  
+  std::string output;
+  if (RunXrayApiCommand("version", output)) {
+    std::istringstream iss(output);
+    std::string line;
+    if (std::getline(iss, line)) {
+      return line;
     }
   }
   return "";
 }
 
-std::string ApiClient::BuildApiUrl(const std::string& endpoint) {
-  return "http://" + api_address_ + endpoint;
-}
-
-/**
- * @brief Makes an HTTP request to the Xray API endpoint.
- * 
- * @param endpoint API endpoint path (e.g., "/stats").
- * @param response Output parameter for response body.
- * 
- * @return true if request succeeded, false otherwise.
- * 
- * @details Implementation:
- * Uses WinINET API (InternetOpenUrlA) to make HTTP requests.
- * Note: Xray API actually uses gRPC, but some endpoints may respond to HTTP.
- */
-bool ApiClient::MakeApiRequest(const std::string& endpoint, std::string& response) {
-  std::string url = BuildApiUrl(endpoint);
+bool ApiClient::RunXrayApiCommand(const std::string& args, std::string& output) {
+  if (!manager_) return false;
   
-  std::cerr << "ApiClient::MakeApiRequest: requesting URL: " << url << std::endl;
+  fs::path xray_path = manager_->xray_executable_path_;
+  if (xray_path.empty() || !fs::exists(xray_path)) return false;
 
-  HINTERNET hInternet = InternetOpenA("Xray-API-Client", INTERNET_OPEN_TYPE_DIRECT, nullptr, nullptr, 0);
-  if (!hInternet) {
-    std::cerr << "InternetOpenA failed: " << GetLastError() << std::endl;
+  std::string command_line = "\"" + xray_path.string() + "\" " + args;
+  
+  // Create pipe for stdout
+  HANDLE hRead, hWrite;
+  SECURITY_ATTRIBUTES sa;
+  sa.nLength = sizeof(SECURITY_ATTRIBUTES);
+  sa.bInheritHandle = TRUE;
+  sa.lpSecurityDescriptor = NULL;
+
+  if (!CreatePipe(&hRead, &hWrite, &sa, 0)) {
     return false;
   }
+  SetHandleInformation(hRead, HANDLE_FLAG_INHERIT, 0);
+
+  STARTUPINFOA si = {};
+  si.cb = sizeof(si);
+  si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+  si.hStdOutput = hWrite;
+  si.hStdError = hWrite; // Capture stderr too
+  si.wShowWindow = SW_HIDE; // Hide the console window
+
+  PROCESS_INFORMATION pi = {};
   
-  HINTERNET hConnect = InternetOpenUrlA(hInternet, url.c_str(), nullptr, 0, 
-                                       INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_RELOAD, 0);
-  if (!hConnect) {
-    std::cerr << "InternetOpenUrlA failed for URL " << url << ", GetLastError=" << GetLastError() << std::endl;
-    InternetCloseHandle(hInternet);
+  std::vector<char> cmd_buffer(command_line.begin(), command_line.end());
+  cmd_buffer.push_back('\0');
+
+  // We need to set working directory to where xray is, just in case
+  std::string working_dir = xray_path.parent_path().string();
+
+  if (!CreateProcessA(NULL, cmd_buffer.data(), NULL, NULL, TRUE, 0, NULL, working_dir.c_str(), &si, &pi)) {
+    CloseHandle(hRead);
+    CloseHandle(hWrite);
     return false;
   }
-  
+
+  // Close write end in parent
+  CloseHandle(hWrite);
+
+  // Read output
   char buffer[4096];
-  DWORD bytes_read = 0;
-  response.clear();
+  DWORD bytesRead;
+  std::stringstream ss;
   
-  while (InternetReadFile(hConnect, buffer, sizeof(buffer) - 1, &bytes_read) && bytes_read > 0) {
-    buffer[bytes_read] = '\0';
-    response += buffer;
+  while (ReadFile(hRead, buffer, sizeof(buffer) - 1, &bytesRead, NULL) && bytesRead > 0) {
+    buffer[bytesRead] = '\0';
+    ss << buffer;
   }
+
+  WaitForSingleObject(pi.hProcess, 5000); // Wait up to 5 seconds
   
-  InternetCloseHandle(hConnect);
-  InternetCloseHandle(hInternet);
-  
-  if (response.empty()) {
-    std::cerr << "ApiClient::MakeApiRequest: response empty for URL: " << url << std::endl;
-  }
-  return !response.empty();
+  CloseHandle(pi.hProcess);
+  CloseHandle(pi.hThread);
+  CloseHandle(hRead);
+
+  output = ss.str();
+  return true;
 }
