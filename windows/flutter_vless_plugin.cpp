@@ -142,7 +142,9 @@ class FlutterVlessPlugin : public flutter::Plugin {
       ui_callbacks_.push_back(std::move(callback));
     }
     if (main_window_handle_ && ui_callback_message_id_ != 0) {
-      PostMessage(main_window_handle_, ui_callback_message_id_, 0, 0);
+      if (!PostMessage(main_window_handle_, ui_callback_message_id_, 0, 0)) {
+        LogMessage("Error: PostMessage failed with error: " + std::to_string(GetLastError()));
+      }
     } else {
       LogMessage("Warning: Cannot post to UI thread, window handle or message ID invalid");
     }
