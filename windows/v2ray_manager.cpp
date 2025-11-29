@@ -273,6 +273,28 @@ bool V2rayManager::Start(const std::string& config, bool proxy_only) {
   return true;
 }
 
+/**
+ * @brief Stops the Xray process and cleans up resources.
+ * 
+ * @details Concurrency & Race Condition Handling:
+ * This function implements a strict shutdown sequence to prevent race conditions
+ * and deadlocks that were causing application hangs.
+ * 
+ * Shutdown Sequence:
+ * 1. Set is_running_ to false: Signals background threads to exit.
+ * 2. Clear System Proxy: Ensures system is not left in a proxied state.
+ * 3. Join Threads BEFORE Resource Destruction:
+ *    - Join stats_thread_: This thread uses api_client_. We MUST wait for it to
+ *      finish before destroying api_client_ to prevent use-after-free crashes.
+ *    - Join v2ray_thread_: Waits for the monitor loop to exit.
+ * 4. Destroy Resources:
+ *    - StopXrayProcess(): Terminates the child process and destroys api_client_.
+ *      This is safe ONLY after stats_thread_ has joined.
+ *    - CleanupTempFiles(): Removes temporary config files.
+ * 
+ * @warning CRITICAL: Do not reorder the join() calls and StopXrayProcess().
+ *          Destroying api_client_ while stats_thread_ is running will cause crashes.
+ */
 void V2rayManager::Stop() {
   if (!is_running_.load()) {
     return;
@@ -283,6 +305,9 @@ void V2rayManager::Stop() {
   // Clear system proxy if it was set (both VPN and proxy modes use system proxy on Windows)
   ClearSystemProxy();
   
+  // CRITICAL: Join threads BEFORE destroying resources (StopXrayProcess)
+  // The stats thread uses api_client_, so we must wait for it to finish
+  // before StopXrayProcess destroys api_client_.
   if (stats_thread_.joinable()) {
     stats_thread_.join();
   }
@@ -291,6 +316,7 @@ void V2rayManager::Stop() {
     v2ray_thread_.join();
   }
   
+  // Safe to destroy resources now that threads are stopped
   StopXrayProcess();
   CleanupTempFiles();
 
@@ -432,6 +458,8 @@ void V2rayManager::RunV2ray() {
   
   // StopXrayProcess and CleanupTempFiles are now handled in Stop()
   // to ensure correct destruction order and thread safety.
+  // We do NOT call them here to avoid double-free or race conditions
+  // if Stop() is called concurrently.
 }
 
 bool V2rayManager::StartXrayProcess(const std::string& config_path) {
@@ -995,23 +1023,33 @@ bool V2rayManager::InitializeApiClient() {
   return true;
 }
 
+/**
+ * @brief Updates traffic statistics by querying Xray API.
+ * 
+ * @details Thread Safety:
+ * This function is called from a background thread (stats_thread_).
+ * It acquires stats_mutex_ ONLY when updating the shared member variables
+ * (total_upload_, etc.). The API call itself (GetStats) is performed
+ * WITHOUT the lock to prevent blocking the main thread or other operations
+ * if the API call hangs (though RunXrayApiCommand has a timeout).
+ */
 void V2rayManager::UpdateTrafficStats() {
-  std::cerr << "UpdateTrafficStats: entry" << std::endl;
+  // std::cerr << "UpdateTrafficStats: entry" << std::endl;
   if (!api_client_) {
-    std::cerr << "UpdateTrafficStats: api_client_ is null" << std::endl;
+    // std::cerr << "UpdateTrafficStats: api_client_ is null" << std::endl;
     return;
   }
   
   std::map<std::string, int64_t> stats;
-  std::cerr << "UpdateTrafficStats: calling GetStats" << std::endl;
+  // std::cerr << "UpdateTrafficStats: calling GetStats" << std::endl;
   if (!api_client_->GetStats(stats)) {
-    std::cerr << "UpdateTrafficStats: GetStats failed" << std::endl;
+    // std::cerr << "UpdateTrafficStats: GetStats failed" << std::endl;
     return;
   }
   
-  std::cerr << "UpdateTrafficStats: acquiring lock" << std::endl;
+  // std::cerr << "UpdateTrafficStats: acquiring lock" << std::endl;
   std::lock_guard<std::mutex> lock(stats_mutex_);
-  std::cerr << "UpdateTrafficStats: lock acquired" << std::endl;
+  // std::cerr << "UpdateTrafficStats: lock acquired" << std::endl;
   
   // Update traffic stats from Xray API
   // Xray stats format: "inbound>>>tag>>>traffic>>>uplink" and "inbound>>>tag>>>traffic>>>downlink"
@@ -1030,7 +1068,7 @@ void V2rayManager::UpdateTrafficStats() {
   download_speed_ = new_download - total_download_;
   total_upload_ = new_upload;
   total_download_ = new_download;
-  std::cerr << "UpdateTrafficStats: exit" << std::endl;
+  // std::cerr << "UpdateTrafficStats: exit" << std::endl;
 }
 
 void V2rayManager::GetTrafficStats(int64_t& upload, int64_t& download) {
@@ -1651,15 +1689,36 @@ std::string ApiClient::GetVersion() {
   return "";
 }
 
+/**
+ * @brief Executes an Xray API command with timeout and non-blocking I/O.
+ * 
+ * @details Deadlock Prevention:
+ * This function uses a non-blocking read loop with a strict timeout to prevent
+ * deadlocks. Standard ReadFile() is blocking; if the Xray process hangs or
+ * doesn't output data (e.g., zombie process), a blocking read would hang
+ * the stats thread indefinitely.
+ * 
+ * Implementation Strategy:
+ * 1. PeekNamedPipe: Checks if data is available in the pipe without removing it.
+ * 2. Conditional ReadFile: ONLY calls ReadFile if bytes are actually available.
+ *    - Reads only the available amount (min(buffer, available)) to ensure
+ *      ReadFile returns immediately.
+ * 3. Timeout Loop: Enforces a hard timeout (3 seconds). If the command doesn't
+ *    complete, the process is terminated to free the thread.
+ * 
+ * @param args The command line arguments for the API call.
+ * @param output String to store the command output.
+ * @return true if command executed successfully, false on error or timeout.
+ */
 bool ApiClient::RunXrayApiCommand(const std::string& args, std::string& output) {
   if (!manager_) {
-    std::cerr << "RunXrayApiCommand failed: manager is null" << std::endl;
+    // std::cerr << "RunXrayApiCommand failed: manager is null" << std::endl;
     return false;
   }
   
   fs::path xray_path = manager_->xray_executable_path_;
   if (xray_path.empty() || !fs::exists(xray_path)) {
-    std::cerr << "RunXrayApiCommand failed: xray path invalid: " << xray_path << std::endl;
+    // std::cerr << "RunXrayApiCommand failed: xray path invalid: " << xray_path << std::endl;
     return false;
   }
 
@@ -1673,7 +1732,7 @@ bool ApiClient::RunXrayApiCommand(const std::string& args, std::string& output) 
   sa.lpSecurityDescriptor = NULL;
 
   if (!CreatePipe(&hRead, &hWrite, &sa, 0)) {
-    std::cerr << "RunXrayApiCommand failed: CreatePipe error " << GetLastError() << std::endl;
+    // std::cerr << "RunXrayApiCommand failed: CreatePipe error " << GetLastError() << std::endl;
     return false;
   }
   SetHandleInformation(hRead, HANDLE_FLAG_INHERIT, 0);
@@ -1693,11 +1752,11 @@ bool ApiClient::RunXrayApiCommand(const std::string& args, std::string& output) 
   // We need to set working directory to where xray is, just in case
   std::string working_dir = xray_path.parent_path().string();
 
-  // Log start of command
-  std::cerr << "RunXrayApiCommand: Starting command " << args << std::endl;
+  // Log start of command (Debug only)
+  // std::cerr << "RunXrayApiCommand: Starting command " << args << std::endl;
 
   if (!CreateProcessA(NULL, cmd_buffer.data(), NULL, NULL, TRUE, 0, NULL, working_dir.c_str(), &si, &pi)) {
-    std::cerr << "RunXrayApiCommand failed: CreateProcess error " << GetLastError() << std::endl;
+    // std::cerr << "RunXrayApiCommand failed: CreateProcess error " << GetLastError() << std::endl;
     CloseHandle(hRead);
     CloseHandle(hWrite);
     return false;
@@ -1724,12 +1783,12 @@ bool ApiClient::RunXrayApiCommand(const std::string& args, std::string& output) 
     }
     
     DWORD bytesAvailable = 0;
-    std::cerr << "RunXrayApiCommand: Peeking pipe..." << std::endl;
+    // std::cerr << "RunXrayApiCommand: Peeking pipe..." << std::endl;
     BOOL peekResult = PeekNamedPipe(hRead, NULL, 0, NULL, &bytesAvailable, NULL);
     
     if (peekResult && bytesAvailable > 0) {
       // Data is available, read it
-      std::cerr << "RunXrayApiCommand: Data available: " << bytesAvailable << std::endl;
+      // std::cerr << "RunXrayApiCommand: Data available: " << bytesAvailable << std::endl;
       
       // Read only what is available to avoid blocking
       DWORD toRead = std::min((DWORD)(sizeof(buffer) - 1), bytesAvailable);
@@ -1737,14 +1796,14 @@ bool ApiClient::RunXrayApiCommand(const std::string& args, std::string& output) 
       if (ReadFile(hRead, buffer, toRead, &bytesRead, NULL) && bytesRead > 0) {
         buffer[bytesRead] = '\0';
         ss << buffer;
-        std::cerr << "RunXrayApiCommand: Read " << bytesRead << " bytes" << std::endl;
+        // std::cerr << "RunXrayApiCommand: Read " << bytesRead << " bytes" << std::endl;
       }
     } else {
       // No data available right now
       // Check if process has exited
       if (WaitForSingleObject(pi.hProcess, 0) == WAIT_OBJECT_0) {
         // Process exited.
-        std::cerr << "RunXrayApiCommand: Process exited" << std::endl;
+        // std::cerr << "RunXrayApiCommand: Process exited" << std::endl;
         // Check one last time for any remaining data in the pipe
         while (PeekNamedPipe(hRead, NULL, 0, NULL, &bytesAvailable, NULL) && bytesAvailable > 0) {
            DWORD toRead = std::min((DWORD)(sizeof(buffer) - 1), bytesAvailable);
@@ -1763,7 +1822,7 @@ bool ApiClient::RunXrayApiCommand(const std::string& args, std::string& output) 
     }
   }
   
-  std::cerr << "RunXrayApiCommand: Finished command " << args << std::endl;
+  // std::cerr << "RunXrayApiCommand: Finished command " << args << std::endl;
   
   CloseHandle(pi.hProcess);
   CloseHandle(pi.hThread);
