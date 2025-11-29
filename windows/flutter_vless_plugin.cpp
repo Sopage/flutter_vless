@@ -127,7 +127,26 @@ class FlutterVlessPlugin : public flutter::Plugin {
   UINT ui_callback_message_id_ = 0;      ///< Registered window message ID for UI callbacks
   std::mutex ui_callbacks_mutex_;        ///< Protects ui_callbacks_ vector
   std::vector<std::function<void()>> ui_callbacks_;  ///< Queue of callbacks to execute on UI thread
-};
+
+  // Mutex to serialize Start/Stop operations to prevent race conditions
+  std::mutex lifecycle_mutex_;
+
+  /**
+   * @brief Schedules a callback to be executed on the UI thread.
+   * 
+   * @param callback The function to execute.
+   */
+  void RunOnUIThread(std::function<void()> callback) {
+    {
+      std::lock_guard<std::mutex> lock(ui_callbacks_mutex_);
+      ui_callbacks_.push_back(std::move(callback));
+    }
+    if (main_window_handle_ && ui_callback_message_id_ != 0) {
+      PostMessage(main_window_handle_, ui_callback_message_id_, 0, 0);
+    } else {
+      LogMessage("Warning: Cannot post to UI thread, window handle or message ID invalid");
+    }
+  }};
 
 void FlutterVlessPlugin::RegisterWithRegistrar(
     flutter::PluginRegistrarWindows *registrar) {
@@ -373,7 +392,11 @@ void FlutterVlessPlugin::HandleMethodCall(
           }
         }
 
-        std::thread([this, config, proxy_only]() {
+        // Convert unique_ptr to shared_ptr to allow capturing in std::function (which requires CopyConstructible)
+        std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>> shared_result = std::move(result);
+        
+        std::thread([this, config, proxy_only, shared_result]() {
+          std::lock_guard<std::mutex> lock(lifecycle_mutex_);
           LogMessage("Starting Xray...");
           if (v2ray_manager_->Start(config, proxy_only)) {
             LogMessage("Xray started successfully");
@@ -383,9 +406,13 @@ void FlutterVlessPlugin::HandleMethodCall(
           } else {
             LogMessage("Xray failed to start");
           }
+          
+          // Return result on UI thread
+          RunOnUIThread([shared_result]() {
+            shared_result->Success(flutter::EncodableValue(nullptr));
+          });
         }).detach();
 
-        result->Success(flutter::EncodableValue(nullptr));
       } else {
         result->Error("INVALID_ARGUMENTS", "Missing remark or config");
       }
@@ -394,45 +421,41 @@ void FlutterVlessPlugin::HandleMethodCall(
     }
   } else if (method_call.method_name().compare("stopVless") == 0) {
     LogMessage("stopVless called");
-    StopStatusTimer();
-    if (v2ray_manager_) {
-      v2ray_manager_->Stop();
-    }
-    is_running_ = false;
-    total_upload_ = 0;
-    total_download_ = 0;
-    upload_speed_ = 0;
-    download_speed_ = 0;
     
+    // Move stop logic to background thread to avoid freezing UI
+    // Convert unique_ptr to shared_ptr to allow capturing in std::function
+    std::shared_ptr<flutter::MethodResult<flutter::EncodableValue>> shared_result = std::move(result);
 
-    /**
-     * @brief Sends DISCONNECTED status to Flutter UI when stopping.
-     * 
-     * @details Status Format:
-     * The status is sent as EncodableList with 6 string elements:
-     * [0] = "0" (duration in seconds)
-     * [1] = "0" (upload speed in bytes/second)
-     * [2] = "0" (download speed in bytes/second)
-     * [3] = "0" (total upload in bytes)
-     * [4] = "0" (total download in bytes)
-     * [5] = "DISCONNECTED" (connection status)
-     * 
-     * @warning DO NOT MODIFY:
-     * The status format and sending mechanism must remain unchanged to ensure
-     * Flutter UI receives updates correctly. Changing this may break UI updates.
-     */
-    // Send DISCONNECTED status to Flutter UI
-    flutter::EncodableList status;
-    status.push_back(flutter::EncodableValue("0"));  // duration
-    status.push_back(flutter::EncodableValue("0"));  // upload speed
-    status.push_back(flutter::EncodableValue("0"));  // download speed
-    status.push_back(flutter::EncodableValue("0"));  // total upload
-    status.push_back(flutter::EncodableValue("0"));  // total download
-    status.push_back(flutter::EncodableValue("DISCONNECTED"));  // status
-    
-    SendStatusToUI(status);
-    
-    result->Success(flutter::EncodableValue(nullptr));
+    std::thread([this, shared_result]() {
+      std::lock_guard<std::mutex> lock(lifecycle_mutex_);
+      
+      StopStatusTimer();
+      if (v2ray_manager_) {
+        v2ray_manager_->Stop();
+      }
+      is_running_ = false;
+      total_upload_ = 0;
+      total_download_ = 0;
+      upload_speed_ = 0;
+      download_speed_ = 0;
+      
+      // Send DISCONNECTED status to Flutter UI
+      flutter::EncodableList status;
+      status.push_back(flutter::EncodableValue("0"));  // duration
+      status.push_back(flutter::EncodableValue("0"));  // upload speed
+      status.push_back(flutter::EncodableValue("0"));  // download speed
+      status.push_back(flutter::EncodableValue("0"));  // total upload
+      status.push_back(flutter::EncodableValue("0"));  // total download
+      status.push_back(flutter::EncodableValue("DISCONNECTED"));  // status
+      
+      SendStatusToUI(status);
+      
+      // Return result on UI thread
+      RunOnUIThread([shared_result]() {
+        shared_result->Success(flutter::EncodableValue(nullptr));
+      });
+    }).detach();
+
   } else if (method_call.method_name().compare("getServerDelay") == 0) {
     const auto *arguments = std::get_if<flutter::EncodableMap>(method_call.arguments());
     if (arguments) {
