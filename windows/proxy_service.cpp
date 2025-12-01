@@ -807,6 +807,27 @@ uint16_t ProxyService::FindFreePort() {
   return port;
 }
 
+/**
+ * @brief Modifies the Xray configuration file to ensure ports are free and API is enabled.
+ * 
+ * @details Port Conflict Resolution:
+ * Scans the configuration for "port" and "listen" fields. If a configured port is
+ * already in use on the system, it replaces it with a free ephemeral port.
+ * 
+ * @details API Injection Strategy:
+ * The Xray API is required for statistics and control. This function injects the
+ * "api" configuration block if it's missing.
+ * 
+ * CRITICAL: The injection position is vital for valid JSON.
+ * 1. It attempts to find the "log" section and insert the "api" block *after* it.
+ *    This is the most reliable location in standard Xray configs.
+ * 2. It handles comma insertion correctly to ensure the resulting JSON is valid.
+ * 3. It uses the "listen" field (e.g., "127.0.0.1:10085") which is the standard
+ *    way to configure the API address in recent Xray versions.
+ * 
+ * @param config_path Path to the configuration file to modify.
+ * @return true if modification was successful (or unnecessary), false on error.
+ */
 bool ProxyService::ReplacePortsInConfigFile(const fs::path& config_path) {
   if (!fs::exists(config_path)) return false;
   std::ifstream ifs(config_path);
@@ -1026,6 +1047,24 @@ std::optional<std::string> ProxyService::DetectApiAddressInConfig(const fs::path
   }
 }
 
+/**
+ * @brief Retrieves traffic statistics from Xray API.
+ * 
+ * @param stats Output map of statistic names to values.
+ * 
+ * @return true if statistics were retrieved successfully, false otherwise.
+ * 
+ * @details Statistics Format:
+ * Xray returns statistics in format:
+ * "inbound>>>tag>>>traffic>>>uplink" and "inbound>>>tag>>>traffic>>>downlink"
+ * 
+ * The function parses these and aggregates upload/download totals.
+ * 
+ * @warning CRITICAL: This function relies on the specific JSON output format of
+ *          `xray api statsquery`. If Xray changes its output format, this parser
+ *          may need to be updated. The parser manually extracts "name" and "value"
+ *          fields to avoid heavy JSON library dependencies.
+ */
 bool ApiClient::GetStats(std::map<std::string, int64_t>& stats) {
   // std::cerr << "GetStats: entry" << std::endl;
   if (!service_) {
@@ -1122,6 +1161,31 @@ std::string ApiClient::GetVersion() {
   return "";
 }
 
+/**
+ * @brief Executes an Xray API command with timeout and non-blocking I/O.
+ * 
+ * @details Deadlock Prevention:
+ * This function uses a non-blocking read loop with a strict timeout to prevent
+ * deadlocks. Standard ReadFile() is blocking; if the Xray process hangs or
+ * doesn't output data (e.g., zombie process), a blocking read would hang
+ * the stats thread indefinitely.
+ * 
+ * Implementation Strategy:
+ * 1. PeekNamedPipe: Checks if data is available in the pipe without removing it.
+ * 2. Conditional ReadFile: ONLY calls ReadFile if bytes are actually available.
+ *    - Reads only the available amount (min(buffer, available)) to ensure
+ *      ReadFile returns immediately.
+ * 3. Timeout Loop: Enforces a hard timeout (3 seconds). If the command doesn't
+ *    complete, the process is terminated to free the thread.
+ * 
+ * @warning IMPORTANT: Do not use `_popen` or blocking `ReadFile` here. They have
+ *          caused application freezes in the past when Xray becomes unresponsive.
+ *          The current `CreateProcess` + `PeekNamedPipe` approach is robust.
+ * 
+ * @param args The command line arguments for the API call.
+ * @param output String to store the command output.
+ * @return true if command executed successfully, false on error or timeout.
+ */
 bool ApiClient::RunXrayApiCommand(const std::string& args, std::string& output) {
   if (!service_) {
     // std::cerr << "RunXrayApiCommand failed: service is null" << std::endl;
