@@ -1124,6 +1124,17 @@ std::optional<fs::path> V2rayManager::FindXrayExecutable() {
     fs::path exe_dir = fs::path(exe_path).parent_path();
     search_paths.push_back(exe_dir / "xray.exe");
     search_paths.push_back(exe_dir / "xray" / "xray.exe");
+    
+    // Check Flutter assets directory (standard location for bundled assets in Release mode)
+    search_paths.push_back(exe_dir / "data" / "flutter_assets" / "xray.exe");
+    search_paths.push_back(exe_dir / "data" / "flutter_assets" / "xray" / "xray.exe");
+    search_paths.push_back(exe_dir / "data" / "flutter_assets" / "assets" / "xray.exe");
+    search_paths.push_back(exe_dir / "data" / "flutter_assets" / "assets" / "xray" / "xray.exe");
+    // User specific paths based on "windows/xray" location
+    search_paths.push_back(exe_dir / "data" / "flutter_assets" / "windows" / "xray" / "xray.exe");
+    search_paths.push_back(exe_dir / "data" / "flutter_assets" / "windows" / "runner" / "xray" / "xray.exe");
+    // Also check if it was copied directly to windows/xray in the build folder (via CMake)
+    search_paths.push_back(exe_dir / "windows" / "xray" / "xray.exe");
   }
   
   for (const auto& path : search_paths) {
@@ -1175,6 +1186,16 @@ std::optional<fs::path> V2rayManager::FindXrayAssets(const fs::path& executable_
     // Check data/flutter_assets/xray (if user organized them)
     if (fs::exists(assets_dir / "xray" / geoip)) {
       return assets_dir / "xray";
+    }
+
+    // Check data/flutter_assets/assets/xray
+    if (fs::exists(assets_dir / "assets" / "xray" / geoip)) {
+      return assets_dir / "assets" / "xray";
+    }
+
+    // Check data/flutter_assets/windows/xray
+    if (fs::exists(assets_dir / "windows" / "xray" / geoip)) {
+      return assets_dir / "windows" / "xray";
     }
   }
   

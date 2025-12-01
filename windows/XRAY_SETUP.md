@@ -15,6 +15,7 @@ Download the latest Xray-core for Windows (minimum version 25.10.15) from:
 Extract the downloaded archive and locate `xray.exe`.
 
 //TODO: add about geoip.dat files for Windows
+//TODO: add release notes about assets folder info
 
 ### 3. Place Xray Executable
 
