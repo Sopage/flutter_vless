@@ -13,11 +13,9 @@
 #include <map>
 #include <cstdint>
 
-namespace fs = std::filesystem;
+#include "proxy_service.h"
 
-// Forward declarations
-struct ProcessHandle;
-struct ApiClient;
+namespace fs = std::filesystem;
 
 /**
  * @brief Manages Xray-core process lifecycle and configuration on Windows.
@@ -90,28 +88,10 @@ class V2rayManager {
   void GetTrafficStats(int64_t& upload, int64_t& download);
 
  private:
-  friend struct ApiClient;
-  void RunV2ray();
-  bool StartXrayProcess(const std::string& config_path);
-  void StopXrayProcess();
-  bool WriteConfigToFile(const std::string& config, fs::path& config_path);
-  
-  // API communication
-  bool InitializeApiClient();
-  void UpdateTrafficStats();
-  int MeasureDelayViaApi(const std::string& url);
-  // Port helpers
-  bool IsPortFree(uint16_t port);
-  uint16_t FindFreePort();
-  bool ReplacePortsInConfigFile(const fs::path& config_path);
-  // Try to detect Xray API listen address ("address" + "port" or single "port")
-  std::optional<std::string> DetectApiAddressInConfig(const fs::path& config_path);
+  void RunV2ray(); // Kept for VPN stub
   
   // Helper methods
-  std::optional<fs::path> FindXrayExecutable();
-  std::optional<fs::path> FindXrayAssets(const fs::path& executable_path);
   bool ValidateConfig(const std::string& config);
-  void CleanupTempFiles();
   
   /**
    * @brief Modifies Xray configuration for Windows platform-specific requirements.
@@ -151,173 +131,14 @@ class V2rayManager {
    */
   std::string ModifyConfigForWindows(const std::string& config, bool proxy_only);
   
-  /**
-   * @brief Configures Windows system-wide proxy settings using WinINET API.
-   * 
-   * Sets the system proxy to route all network traffic through the specified
-   * SOCKS5 proxy server. This affects all applications that respect Windows
-   * system proxy settings.
-   * 
-   * @param proxy_address The proxy server address (typically "127.0.0.1").
-   * @param proxy_port The SOCKS5 proxy port (typically 10807).
-   * 
-   * @return true if proxy was set successfully, false otherwise.
-   * 
-   * @details Implementation:
-   * Uses INTERNET_PER_CONN_OPTION_LISTW with Unicode WinINET API:
-   * - Sets PROXY_TYPE_PROXY flag to enable proxy
-   * - Configures proxy server as "socks=127.0.0.1:PORT"
-   * - Sets bypass list for local addresses (localhost, private networks)
-   * - Notifies system of changes via INTERNET_OPTION_SETTINGS_CHANGED
-   * 
-   * @note The proxy string format is "socks=ADDRESS:PORT" which Windows
-   *       interprets as SOCKS5 protocol.
-   * 
-   * @note Bypass list includes:
-   * - localhost
-   * - 127.* (loopback addresses)
-   * - 10.*, 172.16-31.*, 192.168.* (private networks)
-   * 
-   * This prevents proxy loops and ensures local services remain accessible.
-   * 
-   * @warning Requires appropriate permissions. May fail if user lacks
-   *          administrative privileges or if WinINET API is unavailable.
-   */
-  bool SetSystemProxy(const std::string& proxy_address, uint16_t proxy_port);
-  
-  /**
-   * @brief Clears Windows system-wide proxy settings.
-   * 
-   * Removes the system proxy configuration, restoring direct network access.
-   * This should be called when stopping the VPN/proxy service to restore
-   * normal network behavior.
-   * 
-   * @return true if proxy was cleared successfully, false otherwise.
-   * 
-   * @details Implementation:
-   * Sets PROXY_TYPE_DIRECT flag to disable proxy and restore direct connections.
-   * Notifies the system of changes to ensure all applications pick up the
-   * new settings immediately.
-   * 
-   * @note This function should always be called during cleanup to prevent
-   *       leaving the system in a proxied state after application termination.
-   */
-  bool ClearSystemProxy();
-
   // Thread synchronization and state
   std::atomic<bool> is_running_{false};  ///< Flag indicating if Xray is running
-  std::thread v2ray_thread_;              ///< Thread running Xray process management
-  std::thread stats_thread_;              ///< Thread updating traffic statistics
+  std::thread v2ray_thread_;              ///< Thread running Xray process management (for VPN stub)
   std::string current_config_;            ///< Current Xray configuration JSON
   bool proxy_only_ = false;              ///< If true, proxy mode; if false, VPN mode
   
-  // Traffic statistics (protected by stats_mutex_)
-  std::mutex stats_mutex_;                ///< Mutex protecting traffic statistics
-  int64_t total_upload_ = 0;              ///< Total bytes uploaded (cumulative)
-  int64_t total_download_ = 0;            ///< Total bytes downloaded (cumulative)
-  int64_t upload_speed_ = 0;              ///< Current upload speed (bytes/second)
-  int64_t download_speed_ = 0;            ///< Current download speed (bytes/second)
-  
-  // Process management
-  std::unique_ptr<ProcessHandle> xray_process_;  ///< Handle to Xray process
-  std::unique_ptr<ApiClient> api_client_;       ///< Client for Xray API communication
-  
-  // Configuration and paths
-  fs::path temp_config_path_;             ///< Path to temporary Xray config file
-  fs::path xray_executable_path_;         ///< Path to xray.exe executable
-  std::string api_address_ = "127.0.0.1:10085";  ///< Xray API address (host:port)
-  std::chrono::steady_clock::time_point start_time_;  ///< When Xray was started
-  
-  // Proxy settings buffers (must persist during WinINET API calls)
-  std::vector<char> proxy_server_buf_;   ///< Buffer for proxy server string (Unicode)
-  std::vector<char> proxy_bypass_buf_;    ///< Buffer for proxy bypass list (Unicode)
-};
-
-// Process handle wrapper for xray.exe
-// The concrete Windows HANDLE/PROCESS_INFORMATION usage is implemented
-// in the .cpp file to avoid pulling <windows.h> (and transitively
-// winsock headers) into public headers which breaks include ordering
-// in some translation units.
-struct ProcessHandle {
-  // Opaque handles stored as integer-sized values to avoid windows types
-  std::uintptr_t hProcess = 0;
-  std::uintptr_t hThread = 0;
-  // Pipe handles for capturing stdout/stderr of the child process.
-  std::uintptr_t hStdOutRead = 0;
-  std::uintptr_t hStdErrRead = 0;
-
-  ProcessHandle();
-  ~ProcessHandle();
-
-  // Close the process and handles. Implemented in .cpp.
-  void Close();
-
-  // Query whether the child process is still running.
-  bool IsRunning() const;
-};
-
-/**
- * @brief Client for communicating with Xray API.
- * 
- * @details API Protocol:
- * Xray API uses gRPC protocol, not HTTP/REST. However, for simplicity,
- * this implementation uses HTTP requests to query statistics endpoints.
- * 
- * @details API Endpoints:
- * - /stats: Returns traffic statistics in JSON format
- * - /api/v1/version: Returns Xray version information
- * 
- * @note The API must be enabled in Xray configuration for these methods to work.
- * @note Default API address is 127.0.0.1:10085.
- */
-struct ApiClient {
-  std::string api_address_;  ///< API server address (host:port format)
-  int api_port_ = 10085;     ///< API server port (default: 10085)
-  
-  /**
-   * @brief Retrieves traffic statistics from Xray API via CLI.
-   * 
-   * @param stats Output map of statistic names to values.
-   * 
-   * @return true if statistics were retrieved successfully, false otherwise.
-   * 
-   * @details Implementation:
-   * Executes `xray.exe api statsquery` to get all statistics.
-   * Parses the output line by line.
-   */
-  bool GetStats(std::map<std::string, int64_t>& stats);
-  
-  /**
-   * @brief Measures network delay through Xray proxy.
-   * 
-   * @param url URL to test (typically a simple HTTP endpoint like google.com).
-   * 
-   * @return Delay in milliseconds, or -1 on error.
-   */
-  int MeasureDelay(const std::string& url);
-  
-  /**
-   * @brief Retrieves Xray core version from API.
-   * 
-   * @return Version string (e.g., "25.10.15") or empty string on error.
-   */
-  std::string GetVersion();
-  
- private:
-  /**
-   * @brief Executes an Xray API command via CLI.
-   * 
-   * @param args Command line arguments (e.g., "api statsquery ...").
-   * @param output Output string to store the command result.
-   * 
-   * @return true if command executed successfully, false otherwise.
-   */
-  bool RunXrayApiCommand(const std::string& args, std::string& output);
-  
-  // Reference to the manager to access executable path
-  V2rayManager* manager_ = nullptr;
-  
-  friend class V2rayManager;
+  // Proxy Service Delegate
+  std::unique_ptr<ProxyService> proxy_service_;
 };
 
 #endif  // V2RAY_MANAGER_H_

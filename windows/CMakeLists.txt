@@ -31,6 +31,7 @@ set(PLUGIN_NAME "flutter_vless")
 add_library(${PLUGIN_NAME}_plugin SHARED
   "flutter_vless_plugin.cpp"
   "v2ray_manager.cpp"
+  "proxy_service.cpp"
 )
 
 # Apply a standard set of build settings. This can be removed for plugins
