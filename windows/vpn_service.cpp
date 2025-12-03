@@ -631,42 +631,59 @@ void VpnService::UpdateTrafficStats() {
     std::string args = "api statsquery -server=" + api_address_;
     
     if (RunXrayApiCommand(args, output)) {
-      // DEBUG: Print raw output to see what we're getting
-      std::cerr << "STATS RAW: " << output << std::endl;
-      
       // Parse JSON output manually to avoid dependency issues
       // Format: { "stat": [ { "name": "...", "value": ... }, ... ] }
       
       int64_t new_uplink = 0;
       int64_t new_downlink = 0;
       
-      // Simple regex parsing
-      std::regex stat_pattern("\"name\"\\s*:\\s*\"([^\"]+)\"[\\s\\S]*?\"value\"\\s*:\\s*(\\d+)");
-      auto begin = std::sregex_iterator(output.begin(), output.end(), stat_pattern);
-      auto end = std::sregex_iterator();
-      
-      for (std::sregex_iterator i = begin; i != end; ++i) {
-        std::smatch match = *i;
-        std::string name = match[1].str();
-        int64_t value = std::stoll(match[2].str());
-        
-        // Match outbound proxy stats
-        // Pattern: "outbound>>>proxy>>>traffic>>>uplink" or "outbound>>>proxy>>>traffic>>>downlink"
-        if (name.find("outbound>>>proxy>>>traffic>>>uplink") != std::string::npos) {
-          new_uplink += value;
-        } else if (name.find("outbound>>>proxy>>>traffic>>>downlink") != std::string::npos) {
-          new_downlink += value;
+      // Robust parsing: iterate through each object in the "stat" array
+      size_t stat_pos = output.find("\"stat\"");
+      if (stat_pos != std::string::npos) {
+        size_t array_start = output.find('[', stat_pos);
+        if (array_start != std::string::npos) {
+          size_t current_pos = array_start + 1;
+          
+          while (true) {
+            // Find start of next object
+            size_t obj_start = output.find('{', current_pos);
+            if (obj_start == std::string::npos) break;
+            
+            // Find end of this object
+            size_t obj_end = output.find('}', obj_start);
+            if (obj_end == std::string::npos) break;
+            
+            // Extract object string
+            std::string obj_str = output.substr(obj_start, obj_end - obj_start + 1);
+            
+            // Extract name
+            std::string name;
+            std::regex name_pattern("\"name\"\\s*:\\s*\"([^\"]+)\"");
+            std::smatch name_match;
+            if (std::regex_search(obj_str, name_match, name_pattern)) {
+              name = name_match[1].str();
+            }
+            
+            // Extract value (if present)
+            int64_t value = 0;
+            std::regex value_pattern("\"value\"\\s*:\\s*(\\d+)");
+            std::smatch value_match;
+            if (std::regex_search(obj_str, value_match, value_pattern)) {
+              value = std::stoll(value_match[1].str());
+            }
+            
+            // Accumulate stats
+            if (!name.empty()) {
+              if (name.find("outbound>>>proxy>>>traffic>>>uplink") != std::string::npos) {
+                new_uplink += value;
+              } else if (name.find("outbound>>>proxy>>>traffic>>>downlink") != std::string::npos) {
+                new_downlink += value;
+              }
+            }
+            
+            current_pos = obj_end + 1;
+          }
         }
-        // Also match generic uplink/downlink if specific proxy stats are missing
-        else if (new_uplink == 0 && name.find("uplink") != std::string::npos) {
-           // Only add if we haven't found specific stats yet to avoid double counting
-           // This is a fallback
-        }
-      }
-      
-      // DEBUG: Print parsed values
-      if (new_uplink > 0 || new_downlink > 0) {
-        std::cerr << "STATS PARSED: Up=" << new_uplink << " Down=" << new_downlink << std::endl;
       }
       
       {

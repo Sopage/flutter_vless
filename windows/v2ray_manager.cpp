@@ -169,11 +169,20 @@ std::string V2rayManager::GetCoreVersion() {
 }
 
 void V2rayManager::GetTrafficStats(int64_t& upload, int64_t& download) {
-  if (proxy_only_ && proxy_service_) {
-    proxy_service_->GetTrafficStats(upload, download);
+  if (proxy_only_) {
+    if (proxy_service_) {
+      proxy_service_->GetTrafficStats(upload, download);
+    } else {
+      upload = 0;
+      download = 0;
+    }
   } else {
-    upload = 0;
-    download = 0;
+    if (vpn_service_) {
+      vpn_service_->GetTrafficStats(upload, download);
+    } else {
+      upload = 0;
+      download = 0;
+    }
   }
 }
 
