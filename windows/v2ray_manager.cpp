@@ -66,10 +66,16 @@ namespace json_utils {
 
 V2rayManager::V2rayManager() {
   proxy_service_ = std::make_unique<ProxyService>();
+  vpn_service_ = std::make_unique<VpnService>();
 }
 
 V2rayManager::~V2rayManager() {
   Stop();
+}
+
+V2rayManager& V2rayManager::GetInstance() {
+  static V2rayManager instance;
+  return instance;
 }
 
 bool V2rayManager::Start(const std::string& config, bool proxy_only) {
@@ -93,11 +99,13 @@ bool V2rayManager::Start(const std::string& config, bool proxy_only) {
     }
     return false;
   } else {
-    // VPN Mode: Stub implementation
-    std::cerr << "Starting VPN mode (Simulated)..." << std::endl;
-    is_running_.store(true);
-    v2ray_thread_ = std::thread(&V2rayManager::RunV2ray, this);
-    return true;
+    // VPN Mode: Delegate to VpnService
+    std::cerr << "Starting VPN mode with Tun2Socks..." << std::endl;
+    if (vpn_service_) {
+      is_running_.store(true);
+      return vpn_service_->Start(config);
+    }
+    return false;
   }
 }
 
@@ -113,11 +121,14 @@ void V2rayManager::Stop() {
       proxy_service_->Stop();
     }
   } else {
-    if (v2ray_thread_.joinable()) {
-      v2ray_thread_.join();
+    if (vpn_service_) {
+      vpn_service_->Stop();
     }
-    std::cerr << "VPN mode stopped." << std::endl;
   }
+}
+
+bool V2rayManager::IsRunning() const {
+  return is_running_.load();
 }
 
 void V2rayManager::RunV2ray() {

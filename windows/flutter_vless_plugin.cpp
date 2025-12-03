@@ -102,8 +102,7 @@ class FlutterVlessPlugin : public flutter::Plugin {
   std::unique_ptr<flutter::EventChannel<flutter::EncodableValue>> status_channel_;  ///< EventChannel for status streaming
   std::unique_ptr<flutter::EventSink<flutter::EncodableValue>> status_sink_;  ///< EventSink for sending status updates (protected by sink_mutex_)
   
-  // Xray management
-  std::unique_ptr<V2rayManager> v2ray_manager_;  ///< Manager for Xray process lifecycle
+  // Xray management - now uses singleton pattern via GetInstance()
   
   // Status update thread
   std::thread status_thread_;  ///< Thread that periodically updates and sends status
@@ -157,8 +156,7 @@ void FlutterVlessPlugin::RegisterWithRegistrar(
 }
 
 FlutterVlessPlugin::FlutterVlessPlugin(flutter::PluginRegistrarWindows *registrar)
-    : registrar_(registrar),
-      v2ray_manager_(std::make_unique<V2rayManager>()) {
+    : registrar_(registrar) {
   auto method_channel =
       std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
           registrar->messenger(), "flutter_vless",
@@ -344,9 +342,8 @@ FlutterVlessPlugin::FlutterVlessPlugin(flutter::PluginRegistrarWindows *registra
 
 FlutterVlessPlugin::~FlutterVlessPlugin() {
   StopStatusTimer();
-  if (v2ray_manager_) {
-    v2ray_manager_->Stop();
-  }
+  V2rayManager::GetInstance().Stop();
+  
   // Unregister window proc delegate
   if (registrar_ && window_proc_delegate_id_ != 0) {
     registrar_->UnregisterTopLevelWindowProcDelegate(window_proc_delegate_id_);
@@ -400,7 +397,7 @@ void FlutterVlessPlugin::HandleMethodCall(
         std::thread([this, config, proxy_only, shared_result]() {
           std::lock_guard<std::mutex> lock(lifecycle_mutex_);
           LogMessage("Starting Xray...");
-          if (v2ray_manager_->Start(config, proxy_only)) {
+          if (V2rayManager::GetInstance().Start(config, proxy_only)) {
             LogMessage("Xray started successfully");
             is_running_ = true;
             start_time_ = std::chrono::steady_clock::now();
@@ -432,9 +429,7 @@ void FlutterVlessPlugin::HandleMethodCall(
       std::lock_guard<std::mutex> lock(lifecycle_mutex_);
       
       StopStatusTimer();
-      if (v2ray_manager_) {
-        v2ray_manager_->Stop();
-      }
+      V2rayManager::GetInstance().Stop();
       is_running_ = false;
       total_upload_ = 0;
       total_download_ = 0;
@@ -469,7 +464,7 @@ void FlutterVlessPlugin::HandleMethodCall(
         std::string url = std::get<std::string>(url_it->second);
         
         std::thread([this, config, url, result = std::move(result)]() {
-          int delay = v2ray_manager_->GetServerDelay(config, url);
+          int delay = V2rayManager::GetInstance().GetServerDelay(config, url);
           result->Success(flutter::EncodableValue(delay));
         }).detach();
         return;
@@ -484,7 +479,7 @@ void FlutterVlessPlugin::HandleMethodCall(
         std::string url = std::get<std::string>(url_it->second);
         
         std::thread([this, url, result = std::move(result)]() {
-          int delay = v2ray_manager_->GetConnectedServerDelay(url);
+          int delay = V2rayManager::GetInstance().GetConnectedServerDelay(url);
           result->Success(flutter::EncodableValue(delay));
         }).detach();
         return;
@@ -492,7 +487,7 @@ void FlutterVlessPlugin::HandleMethodCall(
     }
     result->Error("INVALID_ARGUMENTS", "Invalid arguments for getConnectedServerDelay");
   } else if (method_call.method_name().compare("getCoreVersion") == 0) {
-    std::string version = v2ray_manager_->GetCoreVersion();
+    std::string version = V2rayManager::GetInstance().GetCoreVersion();
     LogMessage("getCoreVersion: " + version);
     result->Success(flutter::EncodableValue(version));
   } else {
@@ -569,7 +564,7 @@ void FlutterVlessPlugin::UpdateStatus() {
   // Get traffic stats from v2ray manager
   int64_t current_upload = 0;
   int64_t current_download = 0;
-  v2ray_manager_->GetTrafficStats(current_upload, current_download);
+  V2rayManager::GetInstance().GetTrafficStats(current_upload, current_download);
 
   upload_speed_ = current_upload - total_upload_;
   download_speed_ = current_download - total_download_;
