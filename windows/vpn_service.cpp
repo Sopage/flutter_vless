@@ -91,8 +91,19 @@ bool VpnService::IsRunning() const {
   return is_running_.load();
 }
 
+/**
+ * @brief Main VPN service loop that orchestrates the entire connection.
+ * 
+ * @details This method runs in a separate thread and performs the following:
+ * 1. Injects VPN-specific config (API, DNS, Routing) into user's Xray config
+ * 2. Starts Xray process (VLESS/SOCKS proxy)
+ * 3. Detects SOCKS port and starts Tun2Socks
+ * 4. Configures OS network (TUN interface IP, DNS, routes)
+ * 5. Monitors processes and keeps VPN alive
+ */
 void VpnService::RunVpn() {
-  // 1. Prepare Xray Config with API injection
+  // === PHASE 1: Prepare and start Xray ===
+  // Inject API, DNS, and routing configuration required for VPN mode
   std::string config_with_api = InjectApiConfig(current_config_);
   
   fs::path config_path;
@@ -103,7 +114,7 @@ void VpnService::RunVpn() {
   }
   temp_config_path_ = config_path;
 
-  // 2. Start Xray
+  // Start Xray process with modified config
   if (!StartXrayProcess(config_path.string())) {
     std::cerr << "Failed to start Xray for VPN" << std::endl;
     is_running_.store(false);
@@ -112,17 +123,20 @@ void VpnService::RunVpn() {
   
   std::cerr << "VPN Service: Xray started successfully" << std::endl;
 
-  // Give Xray a moment to start
+  // Wait for Xray to fully initialize its listeners
   std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
-  // 3. Find SOCKS port from config
-  uint16_t socks_port = 10808; // Default
+  // === PHASE 2: Detect SOCKS port from user config ===
+  // Tun2Socks needs to know which port Xray is listening on
+  // We parse the user's config with multiple regex patterns to find the SOCKS inbound
+  uint16_t socks_port = 10808; // Fallback default
   {
     std::string config_str = current_config_;
     
     std::cerr << "VPN Service: Analyzing config to find SOCKS port..." << std::endl;
     
-    // Try multiple patterns to find SOCKS inbound
+    // Try multiple patterns to accommodate different config formats
+    // Pattern 1: Tagged SOCKS inbound (e.g., "in_proxy")
     std::regex tagged_socks("\"tag\"\\s*:\\s*\"(?:in_proxy|socks-in|socks)\"[\\s\\S]*?\"port\"\\s*:\\s*(\\d+)");
     std::smatch match;
     
@@ -130,11 +144,13 @@ void VpnService::RunVpn() {
       socks_port = static_cast<uint16_t>(std::stoi(match[1].str()));
       std::cerr << "VPN Service: Found tagged SOCKS inbound on port " << socks_port << std::endl;
     } else {
+      // Pattern 2: Protocol-based search
       std::regex any_socks("\"protocol\"\\s*:\\s*\"socks\"[\\s\\S]{0,500}?\"port\"\\s*:\\s*(\\d+)");
       if (std::regex_search(config_str, match, any_socks)) {
         socks_port = static_cast<uint16_t>(std::stoi(match[1].str()));
         std::cerr << "VPN Service: Found SOCKS protocol on port " << socks_port << std::endl;
       } else {
+        // Pattern 3: Reverse search (port before protocol)
         std::regex reverse_socks("\"port\"\\s*:\\s*(\\d+)[\\s\\S]{0,300}?\"protocol\"\\s*:\\s*\"socks\"");
         if (std::regex_search(config_str, match, reverse_socks)) {
           socks_port = static_cast<uint16_t>(std::stoi(match[1].str()));
@@ -156,40 +172,50 @@ void VpnService::RunVpn() {
     return;
   }
 
-  // 5. Configure TUN interface IP and routing
-  std::this_thread::sleep_for(std::chrono::milliseconds(2000)); // Wait for TUN to be ready
+  // === PHASE 4: Configure OS Network Stack ===
+  // Wait for Tun2Socks to fully create and initialize the TUN interface
+  std::this_thread::sleep_for(std::chrono::milliseconds(2000));
   
   std::cerr << "VPN Service: Configuring TUN interface..." << std::endl;
   
+  // Assign IP address to the virtual TUN interface
+  // 10.0.85.2 = TUN interface IP, 10.0.85.1 = virtual gateway
   std::string set_ip_cmd = "netsh interface ip set address name=\"flutter_vless_tun\" source=static addr=10.0.85.2 mask=255.255.255.0 gateway=none";
   std::cerr << "VPN Service: Executing: " << set_ip_cmd << std::endl;
   system(set_ip_cmd.c_str());
   
-  // CRITICAL: Add bypass route for VPN server BEFORE adding default route
-  // This prevents routing loop where VPN server traffic goes through TUN
+  // === CRITICAL: Setup Bypass Routes ===
+  // PROBLEM: If we route all traffic through the TUN, including VPN server traffic,
+  // we create a routing loop (VPN server traffic → TUN → Xray → VPN server → TUN → ...)
+  // SOLUTION: Add specific OS routes that bypass the TUN for:
+  // 1. VPN server IP (must go through physical interface)
+  // 2. DNS servers (8.8.8.8, 1.1.1.1) to ensure reliable resolution
+  
   std::string server_address = ExtractServerAddress(current_config_);
   if (!server_address.empty()) {
     std::cerr << "VPN Service: Extracting server address: " << server_address << std::endl;
     
-    // Resolve server address to IP if it's a domain
+    // Resolve domain to IP (Windows routes require IP, not domain)
     std::string server_ip = ResolveToIP(server_address);
     if (!server_ip.empty()) {
       std::cerr << "VPN Service: Resolved server to IP: " << server_ip << std::endl;
       
-      // Get default gateway
+      // Get physical gateway (e.g., router IP like 192.168.1.1)
       std::string default_gateway = GetDefaultGateway();
       if (!default_gateway.empty()) {
         std::cerr << "VPN Service: Default gateway: " << default_gateway << std::endl;
         
-        // Add route for VPN server through physical interface
+        // Clean up any existing route first to avoid "object already exists" errors
         std::string delete_bypass_route_cmd = "route DELETE " + server_ip;
         system(delete_bypass_route_cmd.c_str());
         
+        // Add bypass route: VPN server IP → physical gateway (not through TUN)
         std::string bypass_route_cmd = "route ADD " + server_ip + " MASK 255.255.255.255 " + default_gateway + " METRIC 1";
         std::cerr << "VPN Service: Adding bypass route: " << bypass_route_cmd << std::endl;
         system(bypass_route_cmd.c_str());
         
-        // Add routes for DNS servers (8.8.8.8, 1.1.1.1) to prevent loops when using "direct" outbound
+        // Also bypass DNS servers (used by Xray's internal DNS resolver)
+        // These match the DNS servers in the injected Xray config
         std::string delete_dns1_cmd = "route DELETE 8.8.8.8";
         std::string delete_dns2_cmd = "route DELETE 1.1.1.1";
         system(delete_dns1_cmd.c_str());
@@ -210,15 +236,21 @@ void VpnService::RunVpn() {
     std::cerr << "VPN Service: WARNING - Could not extract server address from config" << std::endl;
   }
   
+  // === Add Default Route ===
+  // Route ALL traffic (0.0.0.0/0) through the TUN interface
+  // This must come AFTER bypass routes to ensure specific routes take precedence
   std::string add_route_cmd = "netsh interface ip add route 0.0.0.0/0 \"flutter_vless_tun\" 10.0.85.1 metric=1";
   std::cerr << "VPN Service: Adding default route: " << add_route_cmd << std::endl;
   system(add_route_cmd.c_str());
   
-  // Wait a moment for interface to settle
+  // Allow network stack to stabilize
   std::this_thread::sleep_for(std::chrono::milliseconds(500));
   
-  // Add DNS servers for TUN interface (use Google DNS and Cloudflare DNS)
-  // Use 'ipv4' explicitly instead of 'ip' which might be ambiguous or default to something else
+  // === Configure DNS Servers ===
+  // Set DNS servers for the TUN interface to ensure name resolution works
+  // Uses 'ipv4' explicitly and 'validate=no' to prevent validation errors
+  // These DNS requests will go through the VPN tunnel (except for the DNS servers themselves,
+  // which are bypassed via OS routes and Xray routing rules)
   std::string dns_cmd1 = "netsh interface ipv4 set dns name=\"flutter_vless_tun\" static 8.8.8.8 primary validate=no";
   std::string dns_cmd2 = "netsh interface ipv4 add dns name=\"flutter_vless_tun\" 1.1.1.1 index=2 validate=no";
   std::cerr << "VPN Service: Configuring DNS servers for TUN interface..." << std::endl;
@@ -454,19 +486,39 @@ void VpnService::StopProcesses() {
   }
 }
 
-// Helper to inject API config for stats
+/**
+ * @brief Injects VPN-specific configuration into the user's Xray config.
+ * 
+ * @param config Original user configuration JSON string.
+ * @return Modified configuration string with injected VPN settings.
+ * 
+ * @details This function performs critical modifications to enable VPN mode:
+ * 
+ * **1. API Configuration**: Adds StatsService API for traffic monitoring
+ * **2. Stats & Policy**: Enables outbound traffic statistics collection
+ * **3. DNS Configuration**: Adds public DNS servers (8.8.8.8, 1.1.1.1) for resolution inside tunnel
+ * **4. Routing Rules**: Implements split tunneling to prevent routing loops:
+ *    - API traffic → internal (no network)
+ *    - VPN server → direct (bypass)
+ *    - DNS servers → direct (bypass)
+ *    - All other traffic → proxy (through VPN)
+ * **5. IPv4 Binding**: Forces Xray to listen on 127.0.0.1 for Tun2Socks compatibility
+ * 
+ * @note The routing rules work in conjunction with OS-level routes to prevent loops.
+ */
 std::string VpnService::InjectApiConfig(const std::string& config) {
   std::string new_config = config;
   
-  // Extract server address from config to add routing bypass
+  // Extract VPN server address for bypass routing
   std::string server_address = ExtractServerAddress(config);
   
-  // Force Xray to listen on IPv4 (127.0.0.1) instead of IPv6 ([::1])
-  // This is crucial because tun2socks is configured to connect to 127.0.0.1
-  // and Xray might not accept IPv4 connections if bound explicitly to [::1]
+  // === IPv4 Binding Fix ===
+  // PROBLEM: Xray might listen on [::1] (IPv6 localhost), but Tun2Socks connects to 127.0.0.1 (IPv4)
+  // SOLUTION: Force all "listen" fields to use 127.0.0.1 instead of [::1]
   new_config = std::regex_replace(new_config, std::regex("\"listen\"\\s*:\\s*\"\\[::1\\]\""), "\"listen\": \"127.0.0.1\"");
   
-  // 1. Ensure "stats": {} exists
+  // === 1. Enable Traffic Statistics ===
+  // Add "stats": {} block if missing (required for traffic monitoring)
   if (new_config.find("\"stats\"") == std::string::npos) {
     size_t first_brace = new_config.find('{');
     if (first_brace != std::string::npos) {
@@ -474,7 +526,8 @@ std::string VpnService::InjectApiConfig(const std::string& config) {
     }
   }
   
-  // 2. Ensure "policy" exists with stats enabled
+  // === 2. Enable Statistics Policy ===
+  // Configure Xray to track outbound upload/download bytes
   if (new_config.find("\"policy\"") == std::string::npos) {
     size_t first_brace = new_config.find('{');
     if (first_brace != std::string::npos) {
@@ -482,7 +535,8 @@ std::string VpnService::InjectApiConfig(const std::string& config) {
     }
   }
   
-  // 3. Ensure "api" block exists
+  // === 3. Enable API Access ===
+  // Adds StatsService for querying traffic statistics via command line
   if (new_config.find("\"api\"") == std::string::npos) {
     size_t first_brace = new_config.find('{');
     if (first_brace != std::string::npos) {
@@ -490,12 +544,14 @@ std::string VpnService::InjectApiConfig(const std::string& config) {
     }
   }
   
-  // 4. Add DNS block to handle DNS resolution through VPN
+  // === 4. Configure DNS Resolution ===
+  // Add public DNS servers to ensure domain resolution works inside the VPN tunnel
+  // These DNS queries will be routed through the "direct" outbound (bypassed)
   if (new_config.find("\"dns\"") == std::string::npos) {
     std::string dns_block = "\n\"dns\": {\n"
       "  \"servers\": [\n"
-      "    \"8.8.8.8\",\n"
-      "    \"1.1.1.1\"\n"
+      "    \"8.8.8.8\",\n"  // Google DNS
+      "    \"1.1.1.1\"\n"      // Cloudflare DNS
       "  ]\n"
       "},";
     
@@ -506,30 +562,35 @@ std::string VpnService::InjectApiConfig(const std::string& config) {
     }
   }
   
-  // 5. Add routing rules to bypass VPN server traffic
+  // === 5. Configure Routing Rules (Split Tunneling) ===
+  // This is THE MOST CRITICAL part for preventing routing loops in VPN mode
   if (!server_address.empty()) {
-    // Check if server_address is an IP to use "ip" field instead of "domain"
+    // Determine if server address is IP or domain for correct routing field
     bool is_ip = std::regex_match(server_address, std::regex("^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$"));
     std::string rule_field = is_ip ? "ip" : "domain";
     
     std::string routing_rule = "\n\"routing\": {\n"
       "  \"domainStrategy\": \"IPIfNonMatch\",\n"
       "  \"rules\": [\n"
+      // Rule 1: API traffic stays internal (no actual network traffic)
       "    {\n"
       "      \"type\": \"field\",\n"
       "      \"inboundTag\": [\"api\"],\n"
       "      \"outboundTag\": \"api\"\n"
       "    },\n"
+      // Rule 2: VPN server traffic bypasses tunnel (prevents routing loop)
       "    {\n"
       "      \"type\": \"field\",\n"
       "      \"" + rule_field + "\": [\"" + server_address + "\"],\n"
       "      \"outboundTag\": \"direct\"\n"
       "    },\n"
+      // Rule 3: DNS servers bypass tunnel (ensures reliable resolution)
       "    {\n"
       "      \"type\": \"field\",\n"
       "      \"ip\": [\"8.8.8.8\", \"1.1.1.1\"],\n"
       "      \"outboundTag\": \"direct\"\n"
       "    },\n"
+      // Rule 4: Everything else goes through the VPN tunnel
       "    {\n"
       "      \"type\": \"field\",\n"
       "      \"network\": \"tcp,udp\",\n"
@@ -545,7 +606,8 @@ std::string VpnService::InjectApiConfig(const std::string& config) {
     }
   }
   
-  // 6. Add API inbound
+  // === 6. Add API Inbound ===
+  // Create dokodemo-door inbound for API queries (stats, version, etc.)
   size_t inbounds_pos = new_config.find("\"inbounds\"");
   if (inbounds_pos != std::string::npos) {
     size_t bracket_pos = new_config.find('[', inbounds_pos);
@@ -624,20 +686,53 @@ void VpnService::GetTrafficStats(int64_t& upload, int64_t& download) {
   download = total_download_;
 }
 
+/**
+ * @brief Periodically queries Xray API for traffic statistics.
+ * 
+ * @details This function runs in a dedicated thread and performs the following:
+ * 1. Executes `xray api statsquery` command every second
+ * 2. Parses the JSON response to extract upload/download bytes
+ * 3. Updates cumulative statistics (thread-safe)
+ * 
+ * @details JSON Response Format:
+ * ```json
+ * {
+ *   "stat": [
+ *     { "name": "inbound>>>socks>>>traffic>>>uplink" },
+ *     { "name": "inbound>>>socks>>>traffic>>>downlink" },
+ *     { "name": "outbound>>>proxy>>>traffic>>>uplink", "value": 12345 },
+ *     { "name": "outbound>>>proxy>>>traffic>>>downlink", "value": 67890 }
+ *   ]
+ * }
+ * ```
+ * 
+ * @note CRITICAL: Some stat objects are missing the "value" field (when traffic is 0).
+ * This is why we use robust object-by-object parsing instead of simple regex.
+ * 
+ * @details Parsing Strategy:
+ * - Iterate through each JSON object in the "stat" array
+ * - Extract "name" and "value" independently for each object
+ * - Filter for "outbound>>>proxy>>>traffic>>>uplink" and "downlink"
+ * - Accumulate values across all matching stats
+ * 
+ * @note This approach prevents mismatching values when some stats are missing.
+ */
 void VpnService::UpdateTrafficStats() {
   while (is_running_.load()) {
     std::string output;
-    // Command: xray api statsquery -server=127.0.0.1:10086
+    // Query Xray API: xray.exe api statsquery -server=127.0.0.1:10086
     std::string args = "api statsquery -server=" + api_address_;
     
     if (RunXrayApiCommand(args, output)) {
-      // Parse JSON output manually to avoid dependency issues
-      // Format: { "stat": [ { "name": "...", "value": ... }, ... ] }
+      // === Parse JSON manually (no external dependencies) ===
+      // Expected format: { "stat": [ { "name": "...", "value": ... }, ... ] }
       
       int64_t new_uplink = 0;
       int64_t new_downlink = 0;
       
-      // Robust parsing: iterate through each object in the "stat" array
+      // === Robust Object-by-Object Parsing ===
+      // WHY: Simple regex can fail when "value" is missing in some objects
+      // SOLUTION: Parse each object separately, matching name to value within the same object
       size_t stat_pos = output.find("\"stat\"");
       if (stat_pos != std::string::npos) {
         size_t array_start = output.find('[', stat_pos);
@@ -645,18 +740,17 @@ void VpnService::UpdateTrafficStats() {
           size_t current_pos = array_start + 1;
           
           while (true) {
-            // Find start of next object
+            // Find next object boundary
             size_t obj_start = output.find('{', current_pos);
             if (obj_start == std::string::npos) break;
             
-            // Find end of this object
             size_t obj_end = output.find('}', obj_start);
             if (obj_end == std::string::npos) break;
             
-            // Extract object string
+            // Extract this specific object
             std::string obj_str = output.substr(obj_start, obj_end - obj_start + 1);
             
-            // Extract name
+            // Extract "name" field from this object
             std::string name;
             std::regex name_pattern("\"name\"\\s*:\\s*\"([^\"]+)\"");
             std::smatch name_match;
@@ -664,7 +758,7 @@ void VpnService::UpdateTrafficStats() {
               name = name_match[1].str();
             }
             
-            // Extract value (if present)
+            // Extract "value" field from this object (if present)
             int64_t value = 0;
             std::regex value_pattern("\"value\"\\s*:\\s*(\\d+)");
             std::smatch value_match;
@@ -672,7 +766,7 @@ void VpnService::UpdateTrafficStats() {
               value = std::stoll(value_match[1].str());
             }
             
-            // Accumulate stats
+            // Accumulate proxy outbound stats
             if (!name.empty()) {
               if (name.find("outbound>>>proxy>>>traffic>>>uplink") != std::string::npos) {
                 new_uplink += value;
@@ -686,6 +780,7 @@ void VpnService::UpdateTrafficStats() {
         }
       }
       
+      // Update cumulative stats (thread-safe)
       {
         std::lock_guard<std::mutex> lock(stats_mutex_);
         total_upload_ = new_uplink;
@@ -693,6 +788,7 @@ void VpnService::UpdateTrafficStats() {
       }
     }
     
+    // Poll every second
     std::this_thread::sleep_for(std::chrono::seconds(1));
   }
 }

@@ -168,8 +168,21 @@ std::string V2rayManager::GetCoreVersion() {
   return "Unknown";
 }
 
+/**
+ * @brief Retrieves current traffic statistics from the active service.
+ * 
+ * @param[out] upload Total bytes uploaded.
+ * @param[out] download Total bytes downloaded.
+ * 
+ * @details This function delegates stats retrieval to either ProxyService or VpnService
+ * depending on the current mode (proxy_only_ flag).
+ * 
+ * @note CRITICAL FIX: This method used to only query ProxyService, causing zero stats
+ * in VPN mode. Now it correctly checks the mode and queries the appropriate service.
+ */
 void V2rayManager::GetTrafficStats(int64_t& upload, int64_t& download) {
   if (proxy_only_) {
+    // Proxy Mode: Get stats from ProxyService
     if (proxy_service_) {
       proxy_service_->GetTrafficStats(upload, download);
     } else {
@@ -177,6 +190,7 @@ void V2rayManager::GetTrafficStats(int64_t& upload, int64_t& download) {
       download = 0;
     }
   } else {
+    // VPN Mode: Get stats from VpnService
     if (vpn_service_) {
       vpn_service_->GetTrafficStats(upload, download);
     } else {
