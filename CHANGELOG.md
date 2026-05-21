@@ -1,3 +1,14 @@
+## 1.0.5
+
+* Fixed Android VPN startup with configs that already include custom SOCKS/HTTP inbounds.
+* Added automatic port conflict handling for local SOCKS, HTTP, and Xray API inbounds.
+* Added support for flat VLESS outbound configs by normalizing them to Xray `vnext/users` format.
+* Fixed server IP exclusion parsing for flat VLESS configs to avoid VPN routing loops.
+* Sanitized Android Xray log paths so desktop/macOS paths do not break startup.
+* Improved Xray startup validation to avoid reporting connected state when the core exits immediately.
+* Added a fallback notification icon for Android foreground service notifications.
+* XRay version up
+
 ## 1.0.4
 
 * feat: XRay version up

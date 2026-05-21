@@ -116,6 +116,9 @@ class FlutterVlessPlugin : FlutterPlugin, ActivityAware, PluginRegistry.Activity
                             val server = vnext.getJSONObject(0)
                             config.CONNECTED_V2RAY_SERVER_ADDRESS = server.optString("address", "")
                             config.CONNECTED_V2RAY_SERVER_PORT = server.optInt("port", 0).toString()
+                        } else if (settings != null) {
+                            config.CONNECTED_V2RAY_SERVER_ADDRESS = settings.optString("address", "")
+                            config.CONNECTED_V2RAY_SERVER_PORT = settings.optInt("port", 0).toString()
                         }
                     }
                 } catch (e: Exception) {

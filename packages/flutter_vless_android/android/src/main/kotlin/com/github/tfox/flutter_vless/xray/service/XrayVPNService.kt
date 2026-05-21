@@ -119,7 +119,6 @@ class XrayVPNService : VpnService() {
             builder.setSession(config.REMARK)
             builder.setMtu(1500)
             builder.addAddress("26.26.26.1", 30)
-            builder.addRoute("0.0.0.0", 0)
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 builder.setMetered(false)

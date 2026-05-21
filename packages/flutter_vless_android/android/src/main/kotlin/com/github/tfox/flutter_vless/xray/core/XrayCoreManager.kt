@@ -41,6 +41,77 @@ object XrayCoreManager {
     private var countDownTimer: CountDownTimer? = null
     private var seconds = 0
 
+    private fun nextFreePort(preferredPort: Int, usedPorts: Set<Int>): Int {
+        var port = preferredPort
+        while (usedPorts.contains(port)) {
+            port++
+        }
+        return port
+    }
+
+    private fun uniqueInboundTag(inbounds: JSONArray, preferredTag: String): String {
+        val tags = mutableSetOf<String>()
+        for (i in 0 until inbounds.length()) {
+            val tag = inbounds.optJSONObject(i)?.optString("tag").orEmpty()
+            if (tag.isNotEmpty()) tags.add(tag)
+        }
+
+        if (!tags.contains(preferredTag)) return preferredTag
+
+        var index = 1
+        var candidate = "${preferredTag}_$index"
+        while (tags.contains(candidate)) {
+            index++
+            candidate = "${preferredTag}_$index"
+        }
+        return candidate
+    }
+
+    private fun normalizeVlessOutbounds(configJson: JSONObject) {
+        val outbounds = configJson.optJSONArray("outbounds") ?: return
+        for (i in 0 until outbounds.length()) {
+            val outbound = outbounds.optJSONObject(i) ?: continue
+            if (outbound.optString("protocol") != "vless") continue
+
+            val settings = outbound.optJSONObject("settings") ?: continue
+            if (settings.has("vnext")) continue
+
+            val address = settings.optString("address")
+            val id = settings.optString("id")
+            val port = settings.optInt("port", 0)
+            if (address.isEmpty() || id.isEmpty() || port <= 0) continue
+
+            val user = JSONObject()
+            user.put("id", id)
+            user.put("encryption", settings.optString("encryption", "none"))
+            user.put("flow", settings.optString("flow", ""))
+            user.put("level", settings.optInt("level", 8))
+
+            val server = JSONObject()
+            server.put("address", address)
+            server.put("port", port)
+            server.put("users", JSONArray().put(user))
+
+            val normalizedSettings = JSONObject()
+            normalizedSettings.put("vnext", JSONArray().put(server))
+            outbound.put("settings", normalizedSettings)
+            Log.d(TAG, "Normalized flat VLESS outbound settings for $address:$port")
+        }
+    }
+
+    private fun sanitizeLogPaths(configJson: JSONObject, filesDir: File) {
+        val log = configJson.optJSONObject("log") ?: return
+        val accessPath = log.optString("access")
+        val errorPath = log.optString("error")
+
+        if (accessPath.isNotEmpty()) {
+            log.put("access", File(filesDir, "access.log").absolutePath)
+        }
+        if (errorPath.isNotEmpty()) {
+            log.put("error", File(filesDir, "error.log").absolutePath)
+        }
+    }
+
     /**
      * Starts the Xray Core process.
      * 
@@ -58,6 +129,8 @@ object XrayCoreManager {
         try {
             // Parse the user-provided JSON config
             val configJson = JSONObject(config.V2RAY_FULL_JSON_CONFIG)
+            normalizeVlessOutbounds(configJson)
+            sanitizeLogPaths(configJson, configFilesDir)
             
             // --- Configuration Injection ---
             // We need to inject several things into the config to make it work with our app:
@@ -97,20 +170,28 @@ object XrayCoreManager {
             // 4. Add Inbounds (SOCKS, HTTP, API)
             val inbounds = configJson.optJSONArray("inbounds") ?: org.json.JSONArray()
             
-            // Check if SOCKS/HTTP inbounds already exist in the user config
-            var hasSocks = false
-            var hasHttp = false
+            // Check whether the exact local ports needed by the Android bridge exist.
+            // A config can already contain SOCKS/HTTP on different ports; tun2socks still
+            // needs a SOCKS listener on config.LOCAL_SOCKS5_PORT.
+            val usedPorts = mutableSetOf<Int>()
+            var hasSocksOnLocalPort = false
+            var hasHttpOnLocalPort = false
             for (i in 0 until inbounds.length()) {
                 val inbound = inbounds.getJSONObject(i)
                 val protocol = inbound.optString("protocol")
-                if (protocol == "socks") hasSocks = true
-                if (protocol == "http") hasHttp = true
+                val port = inbound.optInt("port", -1)
+                if (port > 0) usedPorts.add(port)
+                if (protocol == "socks" && port == config.LOCAL_SOCKS5_PORT) hasSocksOnLocalPort = true
+                if (protocol == "http" && port == config.LOCAL_HTTP_PORT) hasHttpOnLocalPort = true
             }
 
             // Inject SOCKS inbound if missing (Required for tun2socks and Proxy Mode)
-            if (!hasSocks) {
+            if (!hasSocksOnLocalPort) {
+                if (usedPorts.contains(config.LOCAL_SOCKS5_PORT)) {
+                    config.LOCAL_SOCKS5_PORT = nextFreePort(config.LOCAL_SOCKS5_PORT, usedPorts)
+                }
                 val socksInbound = JSONObject()
-                socksInbound.put("tag", "socks")
+                socksInbound.put("tag", uniqueInboundTag(inbounds, "socks"))
                 socksInbound.put("port", config.LOCAL_SOCKS5_PORT)
                 socksInbound.put("listen", "127.0.0.1")
                 socksInbound.put("protocol", "socks")
@@ -120,23 +201,32 @@ object XrayCoreManager {
                 socksInbound.put("settings", settings)
                 socksInbound.put("sniffing", JSONObject().put("enabled", true).put("destOverride", JSONArray().put("http").put("tls")))
                 inbounds.put(socksInbound)
+                usedPorts.add(config.LOCAL_SOCKS5_PORT)
                 Log.d(TAG, "Injected SOCKS inbound on port ${config.LOCAL_SOCKS5_PORT}")
             }
 
             // Inject HTTP inbound if missing (Useful for Proxy Mode)
-            if (!hasHttp) {
+            if (!hasHttpOnLocalPort) {
+                if (usedPorts.contains(config.LOCAL_HTTP_PORT)) {
+                    config.LOCAL_HTTP_PORT = nextFreePort(config.LOCAL_HTTP_PORT, usedPorts)
+                }
                 val httpInbound = JSONObject()
-                httpInbound.put("tag", "http")
+                httpInbound.put("tag", uniqueInboundTag(inbounds, "http"))
                 httpInbound.put("port", config.LOCAL_HTTP_PORT)
                 httpInbound.put("listen", "127.0.0.1")
                 httpInbound.put("protocol", "http")
                 inbounds.put(httpInbound)
+                usedPorts.add(config.LOCAL_HTTP_PORT)
                 Log.d(TAG, "Injected HTTP inbound on port ${config.LOCAL_HTTP_PORT}")
             }
 
             // Inject API Inbound (dokodemo-door) for stats querying
+            if (usedPorts.contains(config.LOCAL_API_PORT)) {
+                config.LOCAL_API_PORT = nextFreePort(config.LOCAL_API_PORT, usedPorts)
+            }
+            val apiInboundTag = uniqueInboundTag(inbounds, "api")
             val apiInbound = JSONObject()
-            apiInbound.put("tag", "api")
+            apiInbound.put("tag", apiInboundTag)
             apiInbound.put("port", config.LOCAL_API_PORT)
             apiInbound.put("listen", "127.0.0.1")
             apiInbound.put("protocol", "dokodemo-door")
@@ -144,6 +234,7 @@ object XrayCoreManager {
             settings.put("address", "127.0.0.1")
             apiInbound.put("settings", settings)
             inbounds.put(apiInbound)
+            usedPorts.add(config.LOCAL_API_PORT)
             configJson.put("inbounds", inbounds)
             
             // 5. Add Routing Rule for API
@@ -151,7 +242,7 @@ object XrayCoreManager {
             val rules = routing.optJSONArray("rules") ?: org.json.JSONArray()
             val apiRule = JSONObject()
             apiRule.put("type", "field")
-            apiRule.put("inboundTag", org.json.JSONArray().put("api"))
+            apiRule.put("inboundTag", org.json.JSONArray().put(apiInboundTag))
             apiRule.put("outboundTag", "api")
             rules.put(apiRule)
             routing.put("rules", rules)
@@ -185,15 +276,21 @@ object XrayCoreManager {
             )
             val pb = ProcessBuilder(cmd)
             pb.directory(configFilesDir)
-            // Redirect output to logcat or ignore
-            // pb.redirectOutput(ProcessBuilder.Redirect.INHERIT)
-            // pb.redirectError(ProcessBuilder.Redirect.INHERIT)
+            pb.redirectErrorStream(true)
             
             // Set environment variables (XRAY_LOCATION_ASSET is crucial for finding geoip/geosite)
             val env = pb.environment()
             env["XRAY_LOCATION_ASSET"] = Utilities.getUserAssetsPath(context)
 
             xrayProcess = pb.start()
+            Thread.sleep(300)
+            if (xrayProcess?.isAlive != true) {
+                val output = xrayProcess?.inputStream?.bufferedReader()?.readText().orEmpty()
+                Log.e(TAG, "Xray process exited during startup. Output: $output")
+                xrayProcess = null
+                AppConfigs.V2RAY_STATE = AppConfigs.V2RAY_STATES.V2RAY_DISCONNECTED
+                return false
+            }
             
             AppConfigs.V2RAY_STATE = AppConfigs.V2RAY_STATES.V2RAY_CONNECTED
             startTimer(context)
@@ -367,9 +464,10 @@ object XrayCoreManager {
         val stopIntent = Intent(context, XrayVPNService::class.java)
         stopIntent.putExtra("COMMAND", AppConfigs.V2RAY_SERVICE_COMMANDS.STOP_SERVICE)
         val stopPendingIntent = PendingIntent.getService(context, 0, stopIntent, flags)
+        val smallIcon = if (config.APPLICATION_ICON != 0) config.APPLICATION_ICON else android.R.drawable.ic_dialog_info
 
         val builder = NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(config.APPLICATION_ICON) // Ensure this icon resource exists or is passed correctly
+            .setSmallIcon(smallIcon)
             .setContentTitle(config.REMARK)
             .setContentText("Connected")
             .addAction(0, config.NOTIFICATION_DISCONNECT_BUTTON_NAME, stopPendingIntent)

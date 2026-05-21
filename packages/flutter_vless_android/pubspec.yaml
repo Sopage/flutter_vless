@@ -1,6 +1,6 @@
 name: flutter_vless_android
 description: Android implementation of the flutter_vless plugin.
-version: 1.0.1
+version: 1.0.2
 repository: https://github.com/XIIIFOX/flutter_vless
 issue_tracker: https://github.com/XIIIFOX/flutter_vless/issues
 

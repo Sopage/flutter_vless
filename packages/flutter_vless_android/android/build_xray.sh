@@ -2,8 +2,9 @@
 
 # Configuration
 XRAY_REPO="https://github.com/XTLS/Xray-core"
+XRAY_VERSION="${XRAY_VERSION:-v26.3.27}"
 TARGET_DIR="src/main/jniLibs"
-NDK_PATH="${ANDROID_NDK_HOME:-/Users/vladislav/Library/Android/sdk/ndk/28.2.13676358}"
+NDK_PATH="${ANDROID_NDK_HOME:-$HOME/Library/Android/sdk/ndk/28.2.13676358}"
 
 # Check NDK
 if [ ! -d "$NDK_PATH" ]; then
@@ -15,7 +16,11 @@ fi
 echo "Using NDK at: $NDK_PATH"
 
 # MacOS NDK Toolchain path
-TOOLCHAIN="${NDK_PATH}/toolchains/llvm/prebuilt/darwin-x86_64"
+case "$(uname -s)" in
+    Darwin) TOOLCHAIN="${NDK_PATH}/toolchains/llvm/prebuilt/darwin-x86_64" ;;
+    Linux) TOOLCHAIN="${NDK_PATH}/toolchains/llvm/prebuilt/linux-x86_64" ;;
+    *) echo "Error: unsupported host OS $(uname -s)"; exit 1 ;;
+esac
 if [ ! -d "$TOOLCHAIN" ]; then
     echo "Error: NDK toolchain not found at $TOOLCHAIN"
     echo "Are you on macOS? If not, please edit the script to match your OS."
@@ -28,8 +33,13 @@ if [ ! -d "Xray-core" ]; then
     git clone "$XRAY_REPO"
 else
     echo "Xray-core directory exists, pulling latest..."
-    cd Xray-core && git pull && cd ..
+    cd Xray-core && git fetch --tags && cd ..
 fi
+
+cd Xray-core
+git fetch --tags
+git checkout "$XRAY_VERSION"
+cd ..
 
 # Build Function
 build_xray() {
@@ -85,8 +95,11 @@ build_xray "arm64-v8a" "arm64" "" "aarch64-linux-android21"
 # ARMv7
 build_xray "armeabi-v7a" "arm" "7" "armv7a-linux-androideabi21"
 
-# x86 (Disabled to save size - legacy 32-bit emulator)
-# build_xray "x86" "386" "" "i686-linux-android21"
+# x86 is disabled by default; enable for the emulator package:
+# XRAY_BUILD_X86=1 ./build_xray.sh
+if [ "${XRAY_BUILD_X86:-0}" = "1" ]; then
+    build_xray "x86" "386" "" "i686-linux-android21"
+fi
 
 # x86_64 (Modern 64-bit emulator)
 build_xray "x86_64" "amd64" "" "x86_64-linux-android21"
