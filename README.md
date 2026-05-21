@@ -76,7 +76,7 @@ class _MyAppState extends State<MyApp> {
 
   Future<void> _init() async {
     await _flutterVless.initializeVless(
-      providerBundleIdentifier: 'com.example.myapp.VPNProvider',
+      providerBundleIdentifier: 'com.example.myapp',
       groupIdentifier: 'group.com.example.myapp',
     );
   }
@@ -232,7 +232,7 @@ parsed.dns = {
 final flutterVless = FlutterVless(onStatusChanged: (status) => print(status));
 
 await flutterVless.initializeVless(
-  providerBundleIdentifier: 'com.example.myapp.VPNProvider',
+  providerBundleIdentifier: 'com.example.myapp',
   groupIdentifier: 'group.com.example.myapp',
 );
 

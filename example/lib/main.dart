@@ -64,8 +64,8 @@ class _HomePageState extends State<HomePage> {
         .initializeVless(
       notificationIconResourceType: 'mipmap',
       notificationIconResourceName: 'ic_launcher',
-      providerBundleIdentifier: 'dev.tfox.example.flutterVless',
-      groupIdentifier: 'group.dev.tfox.example.flutterVless',
+      providerBundleIdentifier: 'dev.tfox.flutterXrayExample',
+      groupIdentifier: 'group.dev.tfox.flutterXray',
     )
         .then((_) async {
       coreVersion = await flutterVless.getCoreVersion();

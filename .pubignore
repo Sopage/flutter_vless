@@ -49,6 +49,7 @@ android/local.properties
 
 ios/Pods/
 ios/Flutter/ephemeral/
+ios/XRay.xcframework/
 
 packages/
 

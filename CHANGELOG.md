@@ -7,7 +7,16 @@
 * Sanitized Android Xray log paths so desktop/macOS paths do not break startup.
 * Improved Xray startup validation to avoid reporting connected state when the core exits immediately.
 * Added a fallback notification icon for Android foreground service notifications.
-* XRay version up
+* Updated the bundled XRay core version.
+* Added Swift Package Manager support for the iOS implementation.
+* Added automatic download and checksum validation for the prebuilt `XRay.xcframework`.
+* Added a separate `flutter-vless-tunnel-support` SwiftPM product for iOS Packet Tunnel extensions.
+* Reworked the iOS plugin source layout for SwiftPM and CocoaPods compatibility.
+* Updated the iOS CocoaPods spec with proper package metadata, iOS 15 minimum target, and XRay release handling.
+* Updated the example iOS project to use local Swift packages instead of manually embedded XRay and Tun2Socks frameworks.
+* Updated iOS setup documentation with SwiftPM, Packet Tunnel, App Groups, and CocoaPods fallback instructions.
+* Updated README examples to pass the base app bundle identifier; the plugin now appends `.XrayTunnel` internally.
+* Excluded local `ios/XRay.xcframework` artifacts from the published package.
 
 ## 1.0.4
 
