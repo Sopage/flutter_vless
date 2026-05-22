@@ -9,5 +9,7 @@ void main(List<String> args) {
     return;
   }
 
+  // Small local probe used during device debugging: paste a VLESS URL and
+  // inspect the exact Xray JSON before it is handed to NetworkExtension.
   stdout.write(VlessURL(url: args.first).getFullConfiguration());
 }

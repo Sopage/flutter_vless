@@ -24,6 +24,9 @@ void main() {
     final permissionGranted = await vless.requestPermission();
     expect(permissionGranted, isTrue);
 
+    // Override VPN_TEST_URL when comparing transports on a real iPhone. The
+    // assertions below require actual HTTP bytes through the provider, so a
+    // green run means more than NEVPNStatus.connected or non-zero counters.
     const url = String.fromEnvironment(
       'VPN_TEST_URL',
       defaultValue:
@@ -57,6 +60,10 @@ void main() {
       // ignore: avoid_print
       print('VPN_PROVIDER_DEBUG_BEGIN\n$snapshot\nVPN_PROVIDER_DEBUG_END');
 
+      // The HTTP health-check line is the important proof: TCP/Reality passed
+      // only after Xray, HEV, DNS/routing, and public Internet response all
+      // worked together. XHTTP links that connect locally but cannot fetch bytes
+      // fail here instead of looking like a successful VPN session.
       expect(snapshot, contains('IPv6 tunnel routing disabled'));
       expect(snapshot, contains('SOCKS inbound health check: ok'));
       expect(snapshot, contains('SOCKS CONNECT health check: ok'));

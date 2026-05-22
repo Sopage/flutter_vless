@@ -10,6 +10,9 @@ class VlessURL extends FlutterVlessURL {
       throw ArgumentError('url is invalid');
     }
     uri = temp;
+    // VLESS transports share the same URL surface, but XHTTP uses `extra` for
+    // important server-side flow-control settings. Keep the raw query value
+    // attached to transport parsing so the generated Xray JSON can preserve it.
     var sni = super.populateTransportSettings(
       transport: uri.queryParameters["type"] ?? "tcp",
       headerType: uri.queryParameters["headerType"],

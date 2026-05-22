@@ -18,6 +18,10 @@ private let tunnelLog = Logger(
 private let tunnelMTU = 1500
 private let dnsServers = ["1.1.1.1", "8.8.8.8"]
 
+/// iOS runs this extension in a separate process from the Flutter app, and the
+/// Runner console does not reliably show extension stdout. Keeping a small
+/// in-memory ring buffer lets the app ask the provider for the exact startup
+/// and health-check evidence that matters on a real device.
 private final class TunnelDebugStore {
     static let shared = TunnelDebugStore()
     private let lock = NSLock()
@@ -89,10 +93,19 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             tunnelLog.info("IPv4 settings address=198.18.0.1/16 includedRoutes=default excludedRoutes=\(settings.excludedRoutes?.count ?? 0, privacy: .public)")
             return settings
         }()
+        // The packet path is currently verified as IPv4-only:
+        // NEPacketTunnel -> HEV tun2socks -> local Xray SOCKS inbound -> VLESS.
+        // Leaving IPv6 enabled made Safari and system services prefer IPv6
+        // destinations that this stack could not prove end-to-end, which looked
+        // like "traffic is moving" while pages stayed stuck. Keep IPv6 disabled
+        // until the provider has a real IPv6 route and health check.
         settings.ipv6Settings = nil
         rememberTunnelLog("IPv6 tunnel routing disabled; using IPv4-only packet tunnel")
         tunnelLog.info("IPv6 tunnel routing disabled; using IPv4-only packet tunnel")
         settings.dnsSettings = {
+            // DNS is owned by NetworkExtension, not by Xray config. The server
+            // IPs are excluded from the default VPN route below, so DNS lookup
+            // cannot recursively depend on the tunnel before Xray is ready.
             let settings = NEDNSSettings(servers: dnsServers)
             settings.matchDomains = [""]
             return settings
@@ -122,6 +135,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 let stats = Socks5Tunnel.stats
                 completionHandler?("\(stats.up.bytes),\(stats.down.bytes)".data(using: .utf8))
             } else if (message == "xray_debug") {
+                // This bridge is intentionally part of the runtime API used by
+                // smoke tests and manual Xcode runs. It is the fastest way to
+                // compare TCP/Reality and XHTTP behavior without attaching LLDB
+                // to the extension process separately.
                 var snapshot = TunnelDebugStore.shared.snapshot()
                 if let hevTail = readHevLogTail(), !hevTail.isEmpty {
                     snapshot += "\n--- HEV log tail ---\n\(hevTail)"
@@ -161,6 +178,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     private func startSocks5Tunnel(serverPort port: Int) {
+        // HEV is the tun2socks bridge: it reads IP packets from NetworkExtension
+        // and forwards them into the local SOCKS inbound opened by Xray.
+        // Xray alone can start successfully while user traffic still cannot
+        // leave the device; HEV logs close that gap during real-device tests.
         let logURL = FileManager.default.temporaryDirectory.appendingPathComponent("hev-socks5-tunnel.log")
         hevLogURL = logURL
         try? FileManager.default.removeItem(at: logURL)
@@ -254,11 +275,20 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         return nil
     }
 
+    /// Normalizes imported Xray JSON for iOS packet-tunnel constraints.
+    ///
+    /// The same URL parser is used for standalone Xray configs and for this
+    /// extension, but iOS has tighter rules: file logs may be denied inside the
+    /// extension sandbox, DNS must line up with `NEDNSSettings`, and the remote
+    /// proxy server must not be reached through the tunnel that depends on it.
     private func prepareXrayConfigForTunnel(_ jsonData: Data) -> Data? {
         do {
             guard var configJSON = try JSONSerialization.jsonObject(with: jsonData, options: []) as? [String: Any] else {
                 return nil
             }
+            // File log paths inside an App Group triggered "operation not
+            // permitted" on device. Empty paths keep Xray logs in memory/os_log
+            // instead of failing startup before HEV can even attach.
             if var log = configJSON["log"] as? [String: Any] {
                 log["access"] = ""
                 log["error"] = ""
@@ -277,6 +307,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             if configJSON.removeValue(forKey: "dns") != nil {
                 tunnelLog.info("Removed Xray DNS config; iOS tunnel DNS settings will handle system DNS")
             }
+            // `AsIs` avoids Xray doing its own remote DNS decision for the proxy
+            // server after NetworkExtension has already installed route
+            // exclusions. That keeps proxy bootstrap deterministic.
             if var routing = configJSON["routing"] as? [String: Any] {
                 routing["domainStrategy"] = "AsIs"
                 configJSON["routing"] = routing
@@ -289,6 +322,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     guard protocolType == "socks" || protocolType == "http" else {
                         continue
                     }
+                    // Tun2socks talks to Xray through SOCKS. Sniffing restores
+                    // HTTP/TLS/QUIC destination metadata, which routing and
+                    // diagnostics need after the original IP packet was wrapped.
                     inbounds[index]["sniffing"] = [
                         "enabled": true,
                         "destOverride": ["http", "tls", "quic"],
@@ -298,6 +334,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 }
                 configJSON["inbounds"] = inbounds
             }
+            var proxyUsesXhttp = false
             if var outbounds = configJSON["outbounds"] as? [[String: Any]] {
                 for index in outbounds.indices {
                     let tag = outbounds[index]["tag"] as? String
@@ -308,10 +345,25 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     var streamSettings = outbounds[index]["streamSettings"] as? [String: Any] ?? [:]
                     let network = streamSettings["network"] as? String ?? "?"
                     let security = streamSettings["security"] as? String ?? "?"
+                    let normalizedSecurity = security.lowercased()
                     let hasXhttpExtra = ((streamSettings["xhttpSettings"] as? [String: Any])?["extra"] != nil)
+                    proxyUsesXhttp = network == "xhttp"
                     tunnelLog.info("Preparing outbound index=\(index, privacy: .public) tag=\(tag ?? "nil", privacy: .public) protocol=\(protocolType ?? "nil", privacy: .public) network=\(network, privacy: .public) security=\(security, privacy: .public) xhttpExtra=\(hasXhttpExtra, privacy: .public)")
-                    if replaceProxyServerDomainWithIPv4(outbound: &outbounds[index]) {
-                        rememberTunnelLog("Resolved proxy server domain to IPv4 in Xray config")
+                    if network == "xhttp" && normalizedSecurity == "none" {
+                        // Plain XHTTP has no TLS SNI. Keep the original domain
+                        // in Xray's outbound so remote HTTP routing still sees
+                        // the expected authority; route exclusion resolves the
+                        // same domain to IPv4 later without mutating the config.
+                        rememberTunnelLog("Keeping XHTTP/none proxy domain in Xray config")
+                    } else {
+                        // Resolve the proxy domain before applying VPN settings
+                        // so the provider can exclude the exact server IP from
+                        // the default route. Without this, the first outbound
+                        // connection may loop back into the tunnel and starve
+                        // Xray startup.
+                        if replaceProxyServerDomainWithIPv4(outbound: &outbounds[index]) {
+                            rememberTunnelLog("Resolved proxy server domain to IPv4 in Xray config")
+                        }
                     }
                     if var sockopt = streamSettings["sockopt"] as? [String: Any],
                        sockopt.removeValue(forKey: "domainStrategy") != nil {
@@ -327,6 +379,18 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 }
                 configJSON["outbounds"] = outbounds
             }
+            if proxyUsesXhttp {
+                // Browser traffic commonly starts with QUIC over UDP/443. The
+                // provider health check proves XHTTP over TCP can fetch bytes,
+                // but UDP/443 can still make Safari look hung while it waits for
+                // QUIC. Blocking only UDP/443 makes browsers fall back to TCP
+                // HTTPS, without changing TCP/Reality or non-browser UDP flows.
+                let blackholeTag = blackholeOutboundTag(configJSON: configJSON)
+                if ensureUdp443BlockRule(configJSON: &configJSON, outboundTag: blackholeTag) {
+                    rememberTunnelLog("Added XHTTP UDP/443 block rule to force browser TCP fallback")
+                    tunnelLog.info("Added XHTTP UDP/443 block rule outboundTag=\(blackholeTag, privacy: .public)")
+                }
+            }
             return try JSONSerialization.data(withJSONObject: configJSON, options: [])
         } catch {
             tunnelLog.warning("Could not prepare Xray config for iOS tunnel: \(error.localizedDescription, privacy: .public)")
@@ -334,6 +398,45 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
+    private func blackholeOutboundTag(configJSON: [String: Any]) -> String {
+        guard let outbounds = configJSON["outbounds"] as? [[String: Any]] else {
+            return "blackhole"
+        }
+        return outbounds.first(where: { outbound in
+            (outbound["protocol"] as? String) == "blackhole"
+        })?["tag"] as? String ?? "blackhole"
+    }
+
+    private func ensureUdp443BlockRule(configJSON: inout [String: Any], outboundTag: String) -> Bool {
+        var routing = configJSON["routing"] as? [String: Any] ?? [:]
+        var rules = routing["rules"] as? [[String: Any]] ?? []
+        let alreadyExists = rules.contains { rule in
+            (rule["type"] as? String) == "field" &&
+            (rule["network"] as? String) == "udp" &&
+            String(describing: rule["port"] ?? "") == "443" &&
+            (rule["outboundTag"] as? String) == outboundTag
+        }
+        if alreadyExists {
+            return false
+        }
+        let rule: [String: Any] = [
+            "type": "field",
+            "network": "udp",
+            "port": "443",
+            "outboundTag": outboundTag
+        ]
+        rules.insert(rule, at: 0)
+        routing["rules"] = rules
+        configJSON["routing"] = routing
+        return true
+    }
+
+    /// Rewrites the primary outbound server domain to an IPv4 literal.
+    ///
+    /// This is not a privacy feature; it is a routing bootstrap guard. iOS needs
+    /// concrete excluded routes before `setTunnelNetworkSettings` finishes, so a
+    /// domain-only proxy server can otherwise become unreachable through its own
+    /// not-yet-established VPN path.
     private func replaceProxyServerDomainWithIPv4(outbound: inout [String: Any]) -> Bool {
         guard var settings = outbound["settings"] as? [String: Any] else {
             return false
@@ -425,6 +528,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private func buildIPv4ExcludedRoutes(serverAddress: String?, bypassSubnets: [String]) -> [NEIPv4Route] {
         var routes = bypassSubnets.compactMap { ipv4Route(fromCIDR: $0) }
+        // DNS server exclusions keep the resolver reachable while the packet
+        // tunnel is starting. The user-visible symptom without this is usually
+        // a connected VPN with tiny upload counters and no downloaded page data.
         routes.append(contentsOf: dnsServers.map {
             NEIPv4Route(destinationAddress: $0, subnetMask: "255.255.255.255")
         })
@@ -449,6 +555,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private func logSocksInboundHealthCheck(port: Int) {
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) {
+            // The three checks separate local startup from real Internet reach:
+            // 1. SOCKS inbound: Xray opened the local port.
+            // 2. CONNECT: Xray accepted an outbound request.
+            // 3. HTTP 204: bytes came back from the public Internet.
+            // TCP/Reality is treated as working only after the third line is ok.
             let result = self.socksInboundHealthCheck(port: port)
             rememberTunnelLog("SOCKS inbound health check: \(result)")
             tunnelLog.info("SOCKS inbound health check: \(result, privacy: .public)")
@@ -582,6 +693,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         return "\(status) response=\(hex(header + tail))"
     }
 
+    /// Performs an HTTP request through the same local SOCKS inbound used by HEV.
+    ///
+    /// This is the decisive regression signal for the current investigation:
+    /// TCP/Reality returned `HTTP/1.1 204 No Content` on device, while failing
+    /// XHTTP links reached earlier stages but did not return usable page bytes.
     private func socksHTTPHealthCheck(port: Int) -> String {
         let host = "www.gstatic.com"
         let path = "/generate_204"
@@ -728,6 +844,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         return content.split(separator: "\n").suffix(40).joined(separator: "\n")
     }
 
+    /// Kept for the future dual-stack path. It is intentionally unused while
+    /// `settings.ipv6Settings` is nil, because enabling IPv6 without an HTTP
+    /// health check recreated the "connected but browser does not load" state.
     private func buildIPv6ExcludedRoutes(serverAddress: String?) -> [NEIPv6Route] {
         guard let serverAddress else { return [] }
         let serverAddresses = resolveIPv6Addresses(for: serverAddress)

@@ -12,6 +12,11 @@ abstract class FlutterVlessURL {
   String get address => '';
   String get remark => '';
 
+  // This SOCKS inbound is the contract used by the iOS packet tunnel:
+  // HEV/tun2socks forwards device packets here, then Xray sends them to the
+  // selected VLESS outbound. Sniffing is enabled by default so the wrapped
+  // traffic still carries HTTP/TLS/QUIC destination metadata for routing and
+  // diagnostics.
   Map<String, dynamic> inbound = {
     "tag": "in_proxy",
     "port": 10807,
@@ -89,6 +94,9 @@ abstract class FlutterVlessURL {
     "mux": null
   };
 
+  // Keep generated configs deterministic for iOS. The packet tunnel installs
+  // concrete route exclusions before Xray starts, so Xray should not introduce
+  // another DNS strategy that can resolve the proxy server differently.
   Map<String, dynamic> routing = {
     "domainStrategy": "AsIs",
     "domainMatcher": null,
@@ -129,6 +137,11 @@ abstract class FlutterVlessURL {
     "sockopt": null
   };
 
+  /// Populates Xray `streamSettings` from VLESS URL query parameters.
+  ///
+  /// These settings feed both normal Xray configs and the iOS packet tunnel.
+  /// The iOS provider later normalizes DNS/logging, but the transport shape
+  /// created here is still the source of truth for TCP/Reality vs XHTTP tests.
   String populateTransportSettings({
     required String transport,
     required String? headerType,
@@ -227,6 +240,9 @@ abstract class FlutterVlessURL {
       };
       sni = host ?? "";
     } else if (transport == 'xhttp') {
+      // XHTTP links often rely on server-specific knobs in `extra`. Preserving
+      // them is required for compatibility, but it is not proof the transport
+      // will work on iOS; the provider HTTP health check is the real signal.
       streamSetting['network'] = 'xhttp';
       final xhttpExtra = decodeXhttpExtra(extra);
       streamSetting['xhttpSettings'] = {
@@ -244,6 +260,11 @@ abstract class FlutterVlessURL {
     return value == null || value.isEmpty ? fallback : value;
   }
 
+  /// Decodes the XHTTP `extra` JSON object from URL query parameters.
+  ///
+  /// Some subscriptions double-encode this field, so decoding is attempted a
+  /// few times before parsing JSON. Invalid data is dropped instead of emitting
+  /// malformed Xray config, which would hide the actual transport failure.
   Map<String, dynamic>? decodeXhttpExtra(String? extra) {
     if (extra == null || extra.isEmpty) {
       return null;

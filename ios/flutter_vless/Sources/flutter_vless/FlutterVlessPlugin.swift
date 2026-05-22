@@ -44,6 +44,12 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         return nil
     }
 
+    /// Polls traffic counters and periodically mirrors provider diagnostics.
+    ///
+    /// The packet tunnel lives in a separate extension process, so a normal
+    /// Xcode run of the Flutter app can claim "CONNECTED" while hiding the
+    /// reason a browser page is stuck. Emitting the provider snapshot every few
+    /// seconds keeps real-device evidence in the Runner console.
     private func startTimer() {
         pluginLog.info("Starting traffic polling timer")
         self.timer?.invalidate()
@@ -88,6 +94,11 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         self.lastProviderDebugLogDate = .distantPast
     }
 
+    /// Sends a lightweight debug request to the NetworkExtension provider.
+    ///
+    /// The snapshot is intentionally verbose enough to compare transports:
+    /// TCP/Reality must show the SOCKS HTTP health check as `ok`, while XHTTP
+    /// failures usually show where the chain stopped.
     private func logProviderDebugSnapshot() {
         guard Date().timeIntervalSince(lastProviderDebugLogDate) >= 5 else {
             return
@@ -158,6 +169,11 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         }
     }
 
+    /// Test/manual diagnostic hook used by the example app and integration test.
+    ///
+    /// This is not traffic data for UI counters; it is a structured escape hatch
+    /// from the extension sandbox so XHTTP and TCP/Reality can be compared from
+    /// the same Xcode session.
     private func getProviderDebugSnapshot(result: @escaping FlutterResult) {
         Task {
             do {
@@ -259,6 +275,11 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         result(nil)
     }
 
+    /// Logs only transport-shape metadata, never credentials.
+    ///
+    /// The summary answers the first debugging question quickly: did the parser
+    /// actually create `tcp/reality`, `xhttp/reality`, or `xhttp/none`, and did
+    /// an XHTTP `extra` object survive URL decoding.
     private func describeConfig(_ data: Data) -> String {
         guard
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
