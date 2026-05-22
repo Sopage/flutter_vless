@@ -25,7 +25,11 @@ abstract class FlutterVlessURL {
       "port": null,
       "network": null
     },
-    "sniffing": {"enabled": false, "destOverride": null, "metadataOnly": null},
+    "sniffing": {
+      "enabled": true,
+      "destOverride": ["http", "tls", "quic"],
+      "metadataOnly": false
+    },
     "streamSettings": null,
     "allocate": null
   };
@@ -49,7 +53,7 @@ abstract class FlutterVlessURL {
       "network": null,
       "address": null,
       "port": null,
-      "domainStrategy": "UseIp",
+      "domainStrategy": "AsIs",
       "redirect": null,
       "userLevel": null,
       "inboundTag": null,
@@ -85,12 +89,8 @@ abstract class FlutterVlessURL {
     "mux": null
   };
 
-  Map<String, dynamic> dns = {
-    "servers": ["8.8.8.8", "8.8.4.4"]
-  };
-
   Map<String, dynamic> routing = {
-    "domainStrategy": "UseIp",
+    "domainStrategy": "AsIs",
     "domainMatcher": null,
     "rules": [],
     "balancers": []
@@ -100,7 +100,6 @@ abstract class FlutterVlessURL {
         "log": log,
         "inbounds": [inbound],
         "outbounds": [outbound1, outbound2, outbound3],
-        "dns": dns,
         "routing": routing,
       };
 
@@ -140,6 +139,7 @@ abstract class FlutterVlessURL {
     required String? key,
     required String? mode,
     required String? serviceName,
+    String? extra,
   }) {
     String sni = '';
     streamSetting['network'] = transport;
@@ -228,14 +228,46 @@ abstract class FlutterVlessURL {
       sni = host ?? "";
     } else if (transport == 'xhttp') {
       streamSetting['network'] = 'xhttp';
+      final xhttpExtra = decodeXhttpExtra(extra);
       streamSetting['xhttpSettings'] = {
         "host": host ?? "",
         "mode": mode ?? "auto",
-        "path": path ?? "/"
+        "path": emptyToDefault(path, "/"),
+        if (xhttpExtra != null) "extra": xhttpExtra,
       };
       sni = host ?? "";
     }
     return sni;
+  }
+
+  String emptyToDefault(String? value, String fallback) {
+    return value == null || value.isEmpty ? fallback : value;
+  }
+
+  Map<String, dynamic>? decodeXhttpExtra(String? extra) {
+    if (extra == null || extra.isEmpty) {
+      return null;
+    }
+
+    String candidate = extra;
+    for (var i = 0; i < 3; i++) {
+      try {
+        final decoded = Uri.decodeComponent(candidate);
+        if (decoded == candidate) {
+          break;
+        }
+        candidate = decoded;
+      } catch (_) {
+        break;
+      }
+    }
+
+    try {
+      final decoded = jsonDecode(candidate);
+      return decoded is Map<String, dynamic> ? decoded : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   void populateTlsSettings({

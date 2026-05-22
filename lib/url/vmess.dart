@@ -26,6 +26,7 @@ class VmessURL extends FlutterVlessURL {
       key: rawConfig['path'],
       mode: rawConfig['type'],
       serviceName: rawConfig['path'],
+      extra: rawConfig['extra'],
     );
     String? fingerprint = (rawConfig['fp'] != null && rawConfig['fp'] != '')
         ? rawConfig['fp']
