@@ -32,7 +32,10 @@
 - **Supports Android 16KB page size (API 35+)**
 - Supports Android Emulator and different architectures specifically: **x86, x86_64, arm64-v8a, armeabi-v7a**.
 - Run flutter_vless as a local proxy or using the VPN mode (Network Extension / VpnService).
-- Parse VLESS/VMESS share links and generate ready-to-run configurations.
+- Proxy-only mode starts local Xray without installing a VPN route; VPN mode routes device traffic through Network Extension / VpnService.
+- Parse VLESS/VMESS/Trojan/Shadowsocks/SOCKS share links and generate ready-to-run Xray configurations.
+- Import raw Xray JSON, base64 subscription lists, Clash YAML, and sing-box JSON for supported Xray protocols.
+- Preserve modern Xray VLESS **Post-Quantum Encryption** values such as `mlkem768x25519plus...` when they are present in URLs or JSON.
 - Measure server delay (ping) for a configuration.
 - Edit configuration (ports, DNS, routing, etc.).
 
@@ -82,7 +85,7 @@ class _MyAppState extends State<MyApp> {
   }
 
   Future<void> _startFromShareLink(String shareLink) async {
-    final FlutterVlessURL parser = FlutterVless.parseFromURL(shareLink);
+    final FlutterVlessURL parser = FlutterVless.parse(shareLink);
     final String config = parser.getFullConfiguration();
 
     final int delayMs = await _flutterVless.getServerDelay(config: config);
@@ -202,12 +205,23 @@ Follow the platform steps below — without these the plugin cannot run VPN/Netw
 ```dart
 import 'package:flutter_vless/flutter_vless.dart';
 
-final String link = 'vmess://...'; // or vless://, trojan:// etc.
-FlutterVlessURL parsed = FlutterVless.parseFromURL(link);
+final String link = 'vmess://...'; // or vless://, trojan://, ss://, etc.
+FlutterVlessURL parsed = FlutterVless.parse(link);
 print('Remark: ${parsed.remark}');
 final String config = parsed.getFullConfiguration();
 print('Config JSON: $config');
 ```
+
+For subscriptions, keep every supported profile:
+
+```dart
+final List<FlutterVlessURL> profiles = FlutterVless.parseMany(subscriptionText);
+```
+
+`parse` and `parseMany` accept single share links, raw Xray JSON, base64
+share-link subscriptions, Clash YAML, and sing-box JSON. Unsupported
+sing-box-only protocols are skipped instead of being converted into broken Xray
+configs.
 
 ### Edit Configuration
 

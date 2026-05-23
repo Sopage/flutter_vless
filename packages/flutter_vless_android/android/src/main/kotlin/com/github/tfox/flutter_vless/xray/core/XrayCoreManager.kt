@@ -114,6 +114,121 @@ object XrayCoreManager {
         }
     }
 
+    internal fun buildRuntimeConfigJson(config: XrayConfig, filesDir: File): JSONObject {
+        val configJson = JSONObject(config.V2RAY_FULL_JSON_CONFIG)
+        normalizeVlessOutbounds(configJson)
+        sanitizeLogPaths(configJson, filesDir)
+
+        // Android needs local control surfaces that may not exist in imported
+        // Xray JSON. Keep this pure so unit tests can verify the exact config
+        // handed to libxray without launching VPN services or native binaries.
+        val apiObj = JSONObject()
+        apiObj.put("tag", "api")
+        apiObj.put("services", JSONArray().put("StatsService"))
+        configJson.put("api", apiObj)
+
+        configJson.put("stats", JSONObject())
+
+        val policyObj = JSONObject()
+        val levelsObj = JSONObject()
+        val level8Obj = JSONObject()
+        level8Obj.put("statsUserUplink", true)
+        level8Obj.put("statsUserDownlink", true)
+        levelsObj.put("8", level8Obj)
+
+        val systemObj = JSONObject()
+        systemObj.put("statsInboundUplink", true)
+        systemObj.put("statsInboundDownlink", true)
+        systemObj.put("statsOutboundUplink", true)
+        systemObj.put("statsOutboundDownlink", true)
+
+        policyObj.put("levels", levelsObj)
+        policyObj.put("system", systemObj)
+        configJson.put("policy", policyObj)
+
+        val inbounds = configJson.optJSONArray("inbounds") ?: JSONArray()
+        val usedPorts = mutableSetOf<Int>()
+        var hasSocksOnLocalPort = false
+        var hasHttpOnLocalPort = false
+        for (i in 0 until inbounds.length()) {
+            val inbound = inbounds.getJSONObject(i)
+            val protocol = inbound.optString("protocol")
+            val port = inbound.optInt("port", -1)
+            if (port > 0) usedPorts.add(port)
+            if (protocol == "socks" && port == config.LOCAL_SOCKS5_PORT) hasSocksOnLocalPort = true
+            if (protocol == "http" && port == config.LOCAL_HTTP_PORT) hasHttpOnLocalPort = true
+        }
+
+        if (!hasSocksOnLocalPort) {
+            if (usedPorts.contains(config.LOCAL_SOCKS5_PORT)) {
+                config.LOCAL_SOCKS5_PORT = nextFreePort(config.LOCAL_SOCKS5_PORT, usedPorts)
+            }
+            val socksInbound = JSONObject()
+            socksInbound.put("tag", uniqueInboundTag(inbounds, "socks"))
+            socksInbound.put("port", config.LOCAL_SOCKS5_PORT)
+            socksInbound.put("listen", "127.0.0.1")
+            socksInbound.put("protocol", "socks")
+            socksInbound.put("settings", JSONObject().put("auth", "noauth").put("udp", true))
+            socksInbound.put(
+                "sniffing",
+                JSONObject().put("enabled", true).put("destOverride", JSONArray().put("http").put("tls"))
+            )
+            inbounds.put(socksInbound)
+            usedPorts.add(config.LOCAL_SOCKS5_PORT)
+            Log.d(TAG, "Injected SOCKS inbound on port ${config.LOCAL_SOCKS5_PORT}")
+        }
+
+        if (!hasHttpOnLocalPort) {
+            if (usedPorts.contains(config.LOCAL_HTTP_PORT)) {
+                config.LOCAL_HTTP_PORT = nextFreePort(config.LOCAL_HTTP_PORT, usedPorts)
+            }
+            val httpInbound = JSONObject()
+            httpInbound.put("tag", uniqueInboundTag(inbounds, "http"))
+            httpInbound.put("port", config.LOCAL_HTTP_PORT)
+            httpInbound.put("listen", "127.0.0.1")
+            httpInbound.put("protocol", "http")
+            inbounds.put(httpInbound)
+            usedPorts.add(config.LOCAL_HTTP_PORT)
+            Log.d(TAG, "Injected HTTP inbound on port ${config.LOCAL_HTTP_PORT}")
+        }
+
+        if (usedPorts.contains(config.LOCAL_API_PORT)) {
+            config.LOCAL_API_PORT = nextFreePort(config.LOCAL_API_PORT, usedPorts)
+        }
+        val apiInboundTag = uniqueInboundTag(inbounds, "api")
+        val apiInbound = JSONObject()
+        apiInbound.put("tag", apiInboundTag)
+        apiInbound.put("port", config.LOCAL_API_PORT)
+        apiInbound.put("listen", "127.0.0.1")
+        apiInbound.put("protocol", "dokodemo-door")
+        apiInbound.put("settings", JSONObject().put("address", "127.0.0.1"))
+        inbounds.put(apiInbound)
+        configJson.put("inbounds", inbounds)
+
+        val routing = configJson.optJSONObject("routing") ?: JSONObject()
+        val rules = routing.optJSONArray("rules") ?: JSONArray()
+        val apiRule = JSONObject()
+        apiRule.put("type", "field")
+        apiRule.put("inboundTag", JSONArray().put(apiInboundTag))
+        apiRule.put("outboundTag", "api")
+        rules.put(apiRule)
+        routing.put("rules", rules)
+        configJson.put("routing", routing)
+
+        return configJson
+    }
+
+    internal fun buildDelayConfigJson(configJson: String, proxyPort: Int, filesDir: File): Pair<JSONObject, Int> {
+        val delayConfig = XrayConfig(
+            V2RAY_FULL_JSON_CONFIG = configJson,
+            LOCAL_SOCKS5_PORT = proxyPort,
+            LOCAL_HTTP_PORT = proxyPort + 1,
+            LOCAL_API_PORT = proxyPort + 2
+        )
+        val runtimeJson = buildRuntimeConfigJson(delayConfig, filesDir)
+        return Pair(runtimeJson, delayConfig.LOCAL_SOCKS5_PORT)
+    }
+
     /**
      * Starts the Xray Core process.
      * 
@@ -129,128 +244,7 @@ object XrayCoreManager {
         val configFilesDir = context.filesDir
         
         try {
-            // Parse the user-provided JSON config
-            val configJson = JSONObject(config.V2RAY_FULL_JSON_CONFIG)
-            normalizeVlessOutbounds(configJson)
-            sanitizeLogPaths(configJson, configFilesDir)
-            
-            // --- Configuration Injection ---
-            // We need to inject several things into the config to make it work with our app:
-            // 1. API Service (for stats)
-            // 2. SOCKS/HTTP Inbounds (for local proxying)
-            // 3. Routing rules (to route API traffic)
-
-            // 1. Add API section (StatsService)
-            val apiObj = JSONObject()
-            apiObj.put("tag", "api")
-            val servicesArr = org.json.JSONArray()
-            servicesArr.put("StatsService")
-            apiObj.put("services", servicesArr)
-            configJson.put("api", apiObj)
-            
-            // 2. Add Stats section
-            configJson.put("stats", JSONObject())
-            
-            // 3. Add Policy section (enable stats for all levels)
-            val policyObj = JSONObject()
-            val levelsObj = JSONObject()
-            val level8Obj = JSONObject()
-            level8Obj.put("statsUserUplink", true)
-            level8Obj.put("statsUserDownlink", true)
-            levelsObj.put("8", level8Obj)
-            
-            val systemObj = JSONObject()
-            systemObj.put("statsInboundUplink", true)
-            systemObj.put("statsInboundDownlink", true)
-            systemObj.put("statsOutboundUplink", true)
-            systemObj.put("statsOutboundDownlink", true)
-            
-            policyObj.put("levels", levelsObj)
-            policyObj.put("system", systemObj)
-            configJson.put("policy", policyObj)
-            
-            // 4. Add Inbounds (SOCKS, HTTP, API)
-            val inbounds = configJson.optJSONArray("inbounds") ?: org.json.JSONArray()
-            
-            // Check whether the exact local ports needed by the Android bridge exist.
-            // A config can already contain SOCKS/HTTP on different ports; tun2socks still
-            // needs a SOCKS listener on config.LOCAL_SOCKS5_PORT.
-            val usedPorts = mutableSetOf<Int>()
-            var hasSocksOnLocalPort = false
-            var hasHttpOnLocalPort = false
-            for (i in 0 until inbounds.length()) {
-                val inbound = inbounds.getJSONObject(i)
-                val protocol = inbound.optString("protocol")
-                val port = inbound.optInt("port", -1)
-                if (port > 0) usedPorts.add(port)
-                if (protocol == "socks" && port == config.LOCAL_SOCKS5_PORT) hasSocksOnLocalPort = true
-                if (protocol == "http" && port == config.LOCAL_HTTP_PORT) hasHttpOnLocalPort = true
-            }
-
-            // Inject SOCKS inbound if missing (Required for tun2socks and Proxy Mode)
-            if (!hasSocksOnLocalPort) {
-                if (usedPorts.contains(config.LOCAL_SOCKS5_PORT)) {
-                    config.LOCAL_SOCKS5_PORT = nextFreePort(config.LOCAL_SOCKS5_PORT, usedPorts)
-                }
-                val socksInbound = JSONObject()
-                socksInbound.put("tag", uniqueInboundTag(inbounds, "socks"))
-                socksInbound.put("port", config.LOCAL_SOCKS5_PORT)
-                socksInbound.put("listen", "127.0.0.1")
-                socksInbound.put("protocol", "socks")
-                val settings = JSONObject()
-                settings.put("auth", "noauth")
-                settings.put("udp", true)
-                socksInbound.put("settings", settings)
-                socksInbound.put("sniffing", JSONObject().put("enabled", true).put("destOverride", JSONArray().put("http").put("tls")))
-                inbounds.put(socksInbound)
-                usedPorts.add(config.LOCAL_SOCKS5_PORT)
-                Log.d(TAG, "Injected SOCKS inbound on port ${config.LOCAL_SOCKS5_PORT}")
-            }
-
-            // Inject HTTP inbound if missing (Useful for Proxy Mode)
-            if (!hasHttpOnLocalPort) {
-                if (usedPorts.contains(config.LOCAL_HTTP_PORT)) {
-                    config.LOCAL_HTTP_PORT = nextFreePort(config.LOCAL_HTTP_PORT, usedPorts)
-                }
-                val httpInbound = JSONObject()
-                httpInbound.put("tag", uniqueInboundTag(inbounds, "http"))
-                httpInbound.put("port", config.LOCAL_HTTP_PORT)
-                httpInbound.put("listen", "127.0.0.1")
-                httpInbound.put("protocol", "http")
-                inbounds.put(httpInbound)
-                usedPorts.add(config.LOCAL_HTTP_PORT)
-                Log.d(TAG, "Injected HTTP inbound on port ${config.LOCAL_HTTP_PORT}")
-            }
-
-            // Inject API Inbound (dokodemo-door) for stats querying
-            if (usedPorts.contains(config.LOCAL_API_PORT)) {
-                config.LOCAL_API_PORT = nextFreePort(config.LOCAL_API_PORT, usedPorts)
-            }
-            val apiInboundTag = uniqueInboundTag(inbounds, "api")
-            val apiInbound = JSONObject()
-            apiInbound.put("tag", apiInboundTag)
-            apiInbound.put("port", config.LOCAL_API_PORT)
-            apiInbound.put("listen", "127.0.0.1")
-            apiInbound.put("protocol", "dokodemo-door")
-            val settings = JSONObject()
-            settings.put("address", "127.0.0.1")
-            apiInbound.put("settings", settings)
-            inbounds.put(apiInbound)
-            usedPorts.add(config.LOCAL_API_PORT)
-            configJson.put("inbounds", inbounds)
-            
-            // 5. Add Routing Rule for API
-            val routing = configJson.optJSONObject("routing") ?: JSONObject()
-            val rules = routing.optJSONArray("rules") ?: org.json.JSONArray()
-            val apiRule = JSONObject()
-            apiRule.put("type", "field")
-            apiRule.put("inboundTag", org.json.JSONArray().put(apiInboundTag))
-            apiRule.put("outboundTag", "api")
-            rules.put(apiRule)
-            routing.put("rules", rules)
-            configJson.put("routing", routing)
-
-            // Write the final config to disk
+            val configJson = buildRuntimeConfigJson(config, configFilesDir)
             val configFile = File(context.filesDir, "config.json")
             configFile.writeText(configJson.toString())
         } catch (e: Exception) {
@@ -541,42 +535,8 @@ object XrayCoreManager {
                 10806 // Fallback
             }
             
-            // Parse the config
-            val json = JSONObject(configJson)
-            var inbounds = json.optJSONArray("inbounds")
-            if (inbounds == null) {
-                inbounds = JSONArray()
-                json.put("inbounds", inbounds)
-            }
-            
-            var hasSocks = false
-            
-            // Update existing SOCKS inbound if present
-            for (i in 0 until inbounds.length()) {
-                val inbound = inbounds.getJSONObject(i)
-                if (inbound.optString("protocol") == "socks") {
-                    inbound.put("port", freePort) // Force use free port
-                    hasSocks = true
-                    break
-                }
-            }
-            
-            if (!hasSocks) {
-                // Inject SOCKS inbound
-                val socksInbound = JSONObject()
-                socksInbound.put("tag", "socks")
-                socksInbound.put("port", freePort)
-                socksInbound.put("listen", "127.0.0.1")
-                socksInbound.put("protocol", "socks")
-                val settings = JSONObject()
-                settings.put("auth", "noauth")
-                settings.put("udp", true)
-                socksInbound.put("settings", settings)
-                inbounds.put(socksInbound)
-                Log.d(TAG, "getServerDelay: Injected SOCKS inbound on port $freePort")
-            }
-            
-            Log.d(TAG, "getServerDelay: Using SOCKS port $freePort")
+            val (json, socksPort) = buildDelayConfigJson(configJson, freePort, context.filesDir)
+            Log.d(TAG, "getServerDelay: Using SOCKS port $socksPort")
             
             // Write temp config file
             val tempConfigFile = File(context.filesDir, "temp_delay_config.json")
@@ -610,7 +570,7 @@ object XrayCoreManager {
             // Measure delay
             val delay = try {
                 val start = System.currentTimeMillis()
-                val proxy = java.net.Proxy(java.net.Proxy.Type.SOCKS, java.net.InetSocketAddress("127.0.0.1", freePort))
+                val proxy = java.net.Proxy(java.net.Proxy.Type.SOCKS, java.net.InetSocketAddress("127.0.0.1", socksPort))
                 val connection = java.net.URL(url).openConnection(proxy) as java.net.HttpURLConnection
                 connection.connectTimeout = 5000
                 connection.readTimeout = 5000

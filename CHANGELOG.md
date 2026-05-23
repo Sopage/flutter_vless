@@ -22,6 +22,14 @@
 * Updated the example importer and real-device smoke test to use the universal parser for both share URLs and raw Xray JSON.
 * Added Dart coverage for VLESS XHTTP/none, VLESS Encryption passthrough, raw Xray JSON import, SS/SOCKS compatibility formats, and iOS/Android MethodChannel arguments.
 * Extracted iOS Packet Tunnel Xray JSON preparation into a Swift testable helper with coverage for log/DNS cleanup, XHTTP UDP/443 routing, proxy server parsing, and VLESS Encryption preservation.
+* Added `FlutterVless.parseMany` subscription import support for base64 share-link lists, Clash YAML, and sing-box JSON for supported Xray protocols.
+* Added Android native Kotlin unit tests for runtime Xray config injection, local port conflict handling, flat VLESS normalization, and log path sanitization.
+* Added CI coverage for Flutter tests, Android native unit tests, Swift PacketTunnel helper tests, and an iOS no-codesign example build.
+* Added a physical-device VPN matrix script/documentation for TCP/Reality, XHTTP/Reality, XHTTP/none with VLESS Encryption, Shadowsocks, Trojan, and VMess.
+* Fixed universal parsing of single VLESS Reality share links so example clipboard import does not route them through subscription heuristics.
+* Fixed Android server-delay probing to reuse the same runtime Xray config normalization as normal startup.
+* Added iOS proxy-only startup through in-app Xray without starting the Packet Tunnel, and skipped VPN permission in the example when proxy-only mode is selected.
+* Forced iOS CocoaPods generated targets to deployment target 15.0 and added an example reset script so integration tests cannot leave the app launching Flutter's test listener.
 
 ## 1.0.4
 

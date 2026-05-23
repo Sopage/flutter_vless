@@ -88,6 +88,13 @@ private actor ServerDelayRunner {
             ])
         }
 
+        if var log = json["log"] as? [String: Any] {
+            log["access"] = ""
+            log["error"] = ""
+            log["dnsLog"] = false
+            json["log"] = log
+        }
+
         json["inbounds"] = inbounds
         return try JSONSerialization.data(withJSONObject: json, options: [])
     }
@@ -168,10 +175,88 @@ private actor ServerDelayRunner {
     }
 }
 
+private final class ProxyOnlyRunner {
+    private let logger = PluginXRayLogger()
+    private(set) var isRunning = false
+    private(set) var connectedDate: Date?
+
+    func start(configData: Data) throws {
+        if isRunning {
+            stop()
+        }
+
+        let preparedConfig = try Self.buildProxyOnlyConfigData(configData: configData)
+        XRaySetMemoryLimit()
+        var startError: NSError?
+        let started = XRayStart(preparedConfig, logger, &startError)
+        guard started else {
+            throw startError ?? NSError(domain: "FlutterVless", code: 10, userInfo: [NSLocalizedDescriptionKey: "Failed to start XRay proxy-only mode"])
+        }
+
+        isRunning = true
+        connectedDate = Date()
+        pluginLog.info("Started XRay proxy-only mode configBytes=\(preparedConfig.count, privacy: .public)")
+    }
+
+    func stop() {
+        guard isRunning else {
+            return
+        }
+        XRayStop()
+        isRunning = false
+        connectedDate = nil
+        pluginLog.info("Stopped XRay proxy-only mode")
+    }
+
+    func measureConnectedDelay(url: String) -> Int64 {
+        guard isRunning else {
+            return -1
+        }
+        var error: NSError?
+        var delay: Int64 = -1
+        XRayMeasureDelay(url, &delay, &error)
+        if let error {
+            pluginLog.error("Proxy-only connected delay failed: \(error.localizedDescription, privacy: .public)")
+            return -1
+        }
+        return delay
+    }
+
+    private static func buildProxyOnlyConfigData(configData: Data) throws -> Data {
+        guard var json = try JSONSerialization.jsonObject(with: configData, options: []) as? [String: Any] else {
+            throw NSError(domain: "FlutterVless", code: 11, userInfo: [NSLocalizedDescriptionKey: "Invalid XRay config JSON"])
+        }
+
+        if var log = json["log"] as? [String: Any] {
+            log["access"] = ""
+            log["error"] = ""
+            log["dnsLog"] = false
+            json["log"] = log
+        } else {
+            json["log"] = ["access": "", "error": "", "dnsLog": false, "loglevel": "warning"]
+        }
+
+        if json["inbounds"] as? [[String: Any]] == nil {
+            json["inbounds"] = [
+                [
+                    "tag": "socks",
+                    "listen": "127.0.0.1",
+                    "port": 10807,
+                    "protocol": "socks",
+                    "settings": ["auth": "noauth", "udp": true]
+                ]
+            ]
+        }
+
+        return try JSONSerialization.data(withJSONObject: json, options: [])
+    }
+}
+
 public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
 
     private var packetTunnelManager: PacketTunnelManager? = nil
     private let serverDelayRunner = ServerDelayRunner()
+    private let proxyOnlyRunner = ProxyOnlyRunner()
 
     private var timer: Timer?
     private var eventSink: FlutterEventSink?
@@ -213,6 +298,13 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         pluginLog.info("Starting traffic polling timer")
         self.timer?.invalidate()
         self.timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true, block: { _ in
+            if self.proxyOnlyRunner.isRunning {
+                let elapsed = Date().timeIntervalSince(self.proxyOnlyRunner.connectedDate ?? Date())
+                let seconds = Int(elapsed)
+                self.eventSink?(["\(seconds)", "0", "0", "0", "0", "CONNECTED"])
+                return
+            }
+
             let elapsed = Date().timeIntervalSince(self.packetTunnelManager?.connectedDate ?? Date())
             let seconds = Int(elapsed)
             self.eventSink?(["\(seconds)", "\(self.uploadSpeed)", "\(self.downloadSpeed)", "\(self.totalUpload)", "\(self.totalDownload)", "CONNECTED"])
@@ -305,6 +397,7 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
 
     private func stopVless(result: FlutterResult) {
         pluginLog.info("stopVless requested")
+        proxyOnlyRunner.stop()
         packetTunnelManager?.stop()
         stopTimer()
         result(nil)
@@ -318,6 +411,11 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         }
         Task {
             do {
+                if self.proxyOnlyRunner.isRunning {
+                    let delay = self.proxyOnlyRunner.measureConnectedDelay(url: url)
+                    result(Int(delay))
+                    return
+                }
                 let delay = try await packetTunnelManager?.sendProviderMessage(data: "xray_delay\(url)".data(using: .utf8)!) ?? "-1".data(using: .utf8)!
                 pluginLog.info("Connected delay response: \(String(decoding: delay, as: UTF8.self), privacy: .public)")
                 result(Int(String(decoding: delay, as: UTF8.self)))
@@ -369,10 +467,27 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
             result(FlutterError(code: "INVALID_ARGUMENTS", message: "Invalid arguments for startVless.", details: nil))
             return
         }
+        let proxyOnly = arguments["proxy_only"] as? Bool ?? false
+        if proxyOnly {
+            do {
+                try proxyOnlyRunner.start(configData: configData)
+                pluginLog.info("Proxy-only start requested successfully remark=\(remark, privacy: .public)")
+                startTimer()
+                result(nil)
+            } catch {
+                pluginLog.error("Failed to start proxy-only mode: \(error.localizedDescription, privacy: .public)")
+                result(FlutterError(code: "PROXY_ONLY_ERROR",
+                                    message: "Failed to start proxy-only mode: \(error.localizedDescription)",
+                                    details: nil))
+            }
+            return
+        }
+
+        proxyOnlyRunner.stop()
         packetTunnelManager?.remark = remark
         packetTunnelManager?.xrayConfig = configData
         packetTunnelManager?.bypassSubnets = arguments["bypass_subnets"] as? [String] ?? []
-        packetTunnelManager?.proxyOnly = arguments["proxy_only"] as? Bool ?? false
+        packetTunnelManager?.proxyOnly = false
         pluginLog.info("startVless remark=\(remark, privacy: .public) configBytes=\(configData.count, privacy: .public) proxyOnly=\(self.packetTunnelManager?.proxyOnly ?? false, privacy: .public) bypassCount=\(self.packetTunnelManager?.bypassSubnets.count ?? 0, privacy: .public)")
         pluginLog.info("\(self.describeConfig(configData), privacy: .public)")
         Task {

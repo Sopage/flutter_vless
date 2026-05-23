@@ -47,6 +47,3 @@ app.*.map.json
 
 
 xray_config_dump.json
-
-
-pubspec.lock

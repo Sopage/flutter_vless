@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_vless/url/shadowsocks.dart';
 import 'package:flutter_vless/url/socks.dart';
+import 'package:flutter_vless/url/subscription.dart';
 import 'package:flutter_vless/url/trojan.dart';
 import 'package:flutter_vless/url/url.dart';
 import 'package:flutter_vless/url/vless.dart';
@@ -127,18 +128,34 @@ class FlutterVless {
     return await VlessPlatform.instance.getCoreVersion();
   }
 
-  /// Parse a share link or raw Xray JSON config.
+  /// Parse a share link, raw Xray JSON config, or subscription payload.
   ///
-  /// Supports vmess://, vless://, trojan://, ss://, socks://, and JSON.
-  /// Prefer this over [parseFromURL] for clipboard/subscription imports: raw
-  /// JSON can carry VLESS Encryption keys that are not recoverable from a bare
-  /// `vless://` link.
+  /// Supports vmess://, vless://, trojan://, ss://, socks://, raw Xray JSON,
+  /// base64 share-link subscriptions, Clash YAML, and sing-box JSON. Prefer
+  /// this over [parseFromURL] for clipboard/subscription imports: raw JSON can
+  /// carry VLESS Encryption keys that are not recoverable from a bare
+  /// `vless://` link. If a subscription contains multiple supported profiles,
+  /// this returns the first one; use [parseMany] to keep the full list.
   static FlutterVlessURL parse(String input) {
     final trimmed = input.trim();
-    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-      return XrayJsonConfig(url: trimmed);
+    if (_isSingleShareLink(trimmed)) {
+      return parseFromURL(trimmed);
     }
-    return parseFromURL(trimmed);
+    return parseMany(trimmed).first;
+  }
+
+  /// Parse every supported profile from a subscription payload.
+  ///
+  /// Unsupported protocols are skipped intentionally. This plugin embeds Xray,
+  /// so sing-box-only protocols such as Hysteria2, TUIC, ShadowTLS, AnyTLS, and
+  /// WireGuard should remain explicit product-scope gaps instead of silently
+  /// producing broken Xray JSON.
+  static List<FlutterVlessURL> parseMany(String input) {
+    return VlessSubscriptionParser.parseMany(
+      input: input,
+      parseUrl: parseFromURL,
+      parseJson: (json) => XrayJsonConfig(url: json),
+    );
   }
 
   /// parse FlutterVlessURL object from Vless share link
@@ -159,5 +176,17 @@ class FlutterVless {
       default:
         throw ArgumentError('url is invalid');
     }
+  }
+
+  static bool _isSingleShareLink(String input) {
+    if (input.contains('\n') || input.contains('\r')) {
+      return false;
+    }
+    final separator = input.indexOf('://');
+    if (separator <= 0) {
+      return false;
+    }
+    return const {'vmess', 'vless', 'trojan', 'ss', 'socks'}
+        .contains(input.substring(0, separator).toLowerCase());
   }
 }

@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  dart:
+    name: Dart and Flutter tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Install root dependencies
+        run: flutter pub get
+      - name: Analyze root package
+        run: flutter analyze
+      - name: Test root package
+        run: flutter test
+      - name: Install Android wrapper package dependencies
+        working-directory: packages/flutter_vless_android
+        run: flutter pub get
+      - name: Analyze Android wrapper package
+        working-directory: packages/flutter_vless_android
+        run: flutter analyze
+      - name: Test Android wrapper package
+        working-directory: packages/flutter_vless_android
+        run: flutter test
+
+  android-native:
+    name: Android native unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Generate Flutter Android project files
+        working-directory: example
+        run: flutter pub get
+      - name: Run plugin Kotlin unit tests
+        working-directory: example/android
+        run: ./gradlew :flutter_vless_android:testDebugUnitTest --stacktrace
+
+  ios:
+    name: iOS Swift and Xcode build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Install root dependencies
+        run: flutter pub get
+      - name: Test PacketTunnel Swift helper
+        run: tool/test_ios_tunnel_support.sh
+      - name: Install example dependencies
+        working-directory: example
+        run: flutter pub get
+      - name: Build example iOS app without codesigning
+        working-directory: example
+        run: flutter build ios --debug --no-codesign

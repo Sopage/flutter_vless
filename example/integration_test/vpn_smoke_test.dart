@@ -30,8 +30,14 @@ void main() {
       groupIdentifier: 'group.dev.tfox.flutterXray',
     );
 
-    final permissionGranted = await vless.requestPermission();
-    expect(permissionGranted, isTrue);
+    const proxyOnly = bool.fromEnvironment(
+      'VPN_PROXY_ONLY',
+      defaultValue: false,
+    );
+    if (!proxyOnly) {
+      final permissionGranted = await vless.requestPermission();
+      expect(permissionGranted, isTrue);
+    }
 
     // Override VPN_TEST_URL when comparing transports on a real iPhone. The
     // assertions below require actual HTTP bytes through the provider, so a
@@ -52,6 +58,7 @@ void main() {
       await vless.startVless(
         remark: parsed.remark,
         config: parsed.getFullConfiguration(),
+        proxyOnly: proxyOnly,
       );
 
       await _waitFor(
@@ -60,6 +67,13 @@ void main() {
         timeout: const Duration(seconds: 30),
         description: 'VPN CONNECTED status',
       );
+
+      if (proxyOnly) {
+        final delay = await vless.getConnectedServerDelay(
+            url: 'https://www.gstatic.com/generate_204');
+        expect(delay, greaterThanOrEqualTo(0));
+        return;
+      }
 
       if (Platform.isAndroid) {
         await _validateBrowserTraffic(statuses, platformLabel: 'ANDROID');

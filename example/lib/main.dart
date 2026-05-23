@@ -89,7 +89,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _connect() async {
-    if (!await flutterVless.requestPermission()) {
+    if (!proxyOnly && !await flutterVless.requestPermission()) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Permission Denied'),
