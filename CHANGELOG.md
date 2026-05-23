@@ -17,6 +17,10 @@
 * Updated iOS setup documentation with SwiftPM, Packet Tunnel, App Groups, and CocoaPods fallback instructions.
 * Updated README examples to pass the base app bundle identifier; the plugin now appends `.XrayTunnel` internally.
 * Excluded local `ios/XRay.xcframework` artifacts from the published package.
+* Documented Xray VLESS Encryption handling for `mlkem768x25519plus...` values and why they cannot be inferred from bare `vless://` links.
+* Added raw Xray JSON/JSON-array import support so Happ-style configs preserve server-provisioned `users[].encryption` values 1:1.
+* Updated the example importer and real-device smoke test to use the universal parser for both share URLs and raw Xray JSON.
+* Added Dart coverage for VLESS XHTTP/none, VLESS Encryption passthrough, raw Xray JSON import, SS/SOCKS compatibility formats, and iOS/Android MethodChannel arguments.
 
 ## 1.0.4
 

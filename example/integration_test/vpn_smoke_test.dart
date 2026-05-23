@@ -40,7 +40,13 @@ void main() {
       'VPN_TEST_URL',
       defaultValue: 'vless://',
     );
-    final parsed = FlutterVless.parseFromURL(url);
+    // Use the universal importer here, not parseFromURL. The XHTTP/none
+    // regression was caused by a Happ JSON config carrying VLESS Encryption
+    // (`users[].encryption = mlkem768x25519plus...`) while the visible share
+    // link did not. Real-device smoke tests must be able to compare both forms:
+    // the bare URL should expose missing-key failures, and the raw JSON should
+    // prove the tunnel works when the server-provisioned key is preserved.
+    final parsed = FlutterVless.parse(url);
 
     try {
       await vless.startVless(

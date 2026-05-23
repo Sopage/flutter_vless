@@ -49,6 +49,21 @@ class VlessURL extends FlutterVlessURL {
 
   late final Uri uri;
 
+  /// Xray VLESS Encryption value for this user.
+  ///
+  /// Modern Xray supports post-quantum VLESS Encryption values such as
+  /// `mlkem768x25519plus.native.1rtt...`. That value is the client half of a
+  /// key pair generated with `xray vlessenc` and must match the server-side
+  /// `decryption` setting. It is not derivable from UUID, host, path, XHTTP
+  /// mode, or any other normal share-link field.
+  ///
+  /// This is why a bare `vless://...?type=xhttp&security=none` link can import
+  /// cleanly but still fail on-device with only SOCKS CONNECT success and no
+  /// HTTP bytes. If a subscription or JSON config provides `encryption`, pass it
+  /// through exactly. If the URL omits it, the only safe default is Xray's
+  /// legacy `"none"`.
+  String get encryption => uri.queryParameters["encryption"] ?? "none";
+
   @override
   Map<String, dynamic> get outbound1 => {
         "tag": "proxy",
@@ -64,7 +79,7 @@ class VlessURL extends FlutterVlessURL {
                   "alterId": null,
                   "security": security,
                   "level": level,
-                  "encryption": uri.queryParameters["encryption"] ?? "none",
+                  "encryption": encryption,
                   "flow": uri.queryParameters["flow"] ?? "",
                 }
               ]

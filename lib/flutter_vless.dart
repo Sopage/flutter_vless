@@ -6,6 +6,7 @@ import 'package:flutter_vless/url/trojan.dart';
 import 'package:flutter_vless/url/url.dart';
 import 'package:flutter_vless/url/vless.dart';
 import 'package:flutter_vless/url/vmess.dart';
+import 'package:flutter_vless/url/xray_config.dart';
 import 'package:flutter_vless_platform_interface/flutter_vless_platform_interface.dart';
 
 export 'package:flutter_vless_platform_interface/flutter_vless_platform_interface.dart';
@@ -124,6 +125,20 @@ class FlutterVless {
   // This method returns the FlutterVless Core version.
   Future<String> getCoreVersion() async {
     return await VlessPlatform.instance.getCoreVersion();
+  }
+
+  /// Parse a share link or raw Xray JSON config.
+  ///
+  /// Supports vmess://, vless://, trojan://, ss://, socks://, and JSON.
+  /// Prefer this over [parseFromURL] for clipboard/subscription imports: raw
+  /// JSON can carry VLESS Encryption keys that are not recoverable from a bare
+  /// `vless://` link.
+  static FlutterVlessURL parse(String input) {
+    final trimmed = input.trim();
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      return XrayJsonConfig(url: trimmed);
+    }
+    return parseFromURL(trimmed);
   }
 
   /// parse FlutterVlessURL object from Vless share link

@@ -116,7 +116,7 @@ class _HomePageState extends State<HomePage> {
       try {
         final text =
             (await Clipboard.getData('text/plain'))?.text?.trim() ?? '';
-        final FlutterVlessURL parsed = FlutterVless.parseFromURL(text);
+        final FlutterVlessURL parsed = FlutterVless.parse(text);
         remark = parsed.remark;
         config.text = parsed.getFullConfiguration();
         if (!mounted) return;
