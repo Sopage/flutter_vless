@@ -4,15 +4,174 @@ import NetworkExtension
 import Combine
 import XRay
 import os
+import CFNetwork
+import Darwin
 
 private let pluginLog = Logger(
     subsystem: Bundle.main.bundleIdentifier ?? "flutter_vless.Runner",
     category: "FlutterVlessPlugin"
 )
 
+private final class PluginXRayLogger: NSObject, XRayLoggerProtocol {
+    func logInput(_ s: String?) {
+        if let message = s {
+            pluginLog.info("XRay delay probe: \(message, privacy: .public)")
+        }
+    }
+}
+
+private actor ServerDelayRunner {
+    private let logger = PluginXRayLogger()
+
+    func measure(config: String, url: String) async -> Int64 {
+        do {
+            guard URL(string: url) != nil else {
+                throw NSError(domain: "FlutterVless", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid probe URL"])
+            }
+
+            let proxyPort = Self.findFreePort()
+            let delayConfig = try Self.buildDelayConfigData(config: config, proxyPort: proxyPort)
+
+            XRaySetMemoryLimit()
+            var startError: NSError?
+            let started = XRayStart(delayConfig, logger, &startError)
+            guard started else {
+                throw startError ?? NSError(domain: "FlutterVless", code: 2, userInfo: [NSLocalizedDescriptionKey: "Failed to start XRay delay probe"])
+            }
+            defer {
+                XRayStop()
+                pluginLog.info("Stopped XRay delay probe")
+            }
+
+            pluginLog.info("Started XRay delay probe on HTTP proxy port \(proxyPort, privacy: .public)")
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+            return try await Self.measureURL(url, proxyPort: proxyPort)
+        } catch {
+            pluginLog.error("Server delay probe failed: \(error.localizedDescription, privacy: .public)")
+            return -1
+        }
+    }
+
+    private static func buildDelayConfigData(config: String, proxyPort: Int) throws -> Data {
+        guard
+            let data = config.data(using: .utf8),
+            var json = try JSONSerialization.jsonObject(with: data, options: []) as? [String: Any]
+        else {
+            throw NSError(domain: "FlutterVless", code: 3, userInfo: [NSLocalizedDescriptionKey: "Invalid XRay config JSON"])
+        }
+
+        var inbounds = json["inbounds"] as? [[String: Any]] ?? []
+        var hasProxyInbound = false
+
+        for index in inbounds.indices {
+            guard
+                inbounds[index]["protocol"] as? String == "http" ||
+                inbounds[index]["protocol"] as? String == "socks"
+            else {
+                continue
+            }
+            inbounds[index]["protocol"] = "http"
+            inbounds[index]["port"] = proxyPort
+            inbounds[index]["listen"] = "127.0.0.1"
+            inbounds[index]["settings"] = [:]
+            hasProxyInbound = true
+            break
+        }
+
+        if !hasProxyInbound {
+            inbounds.append([
+                "tag": "socks",
+                "port": proxyPort,
+                "listen": "127.0.0.1",
+                "protocol": "http",
+                "settings": [:]
+            ])
+        }
+
+        json["inbounds"] = inbounds
+        return try JSONSerialization.data(withJSONObject: json, options: [])
+    }
+
+    private static func measureURL(_ url: String, proxyPort: Int) async throws -> Int64 {
+        guard let probeURL = URL(string: url) else {
+            throw NSError(domain: "FlutterVless", code: 4, userInfo: [NSLocalizedDescriptionKey: "Invalid probe URL"])
+        }
+
+        var request = URLRequest(url: probeURL)
+        request.httpMethod = "HEAD"
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        request.timeoutInterval = 5
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 5
+        configuration.timeoutIntervalForResource = 5
+        configuration.connectionProxyDictionary = [
+            kCFNetworkProxiesHTTPEnable as String: true,
+            kCFNetworkProxiesHTTPProxy as String: "127.0.0.1",
+            kCFNetworkProxiesHTTPPort as String: proxyPort,
+            "HTTPSEnable": true,
+            "HTTPSProxy": "127.0.0.1",
+            "HTTPSPort": proxyPort
+        ]
+
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        let start = DispatchTime.now().uptimeNanoseconds
+        let (_, response) = try await session.data(for: request)
+        let elapsed = (DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
+        if let httpResponse = response as? HTTPURLResponse {
+            pluginLog.info("Server delay probe response=\(httpResponse.statusCode, privacy: .public) delay=\(elapsed, privacy: .public)ms")
+        } else {
+            pluginLog.info("Server delay probe delay=\(elapsed, privacy: .public)ms")
+        }
+        return Int64(elapsed)
+    }
+
+    private static func findFreePort() -> Int {
+        let fallbackPort = 10806
+        let socketDescriptor = socket(AF_INET, SOCK_STREAM, 0)
+        guard socketDescriptor >= 0 else {
+            return fallbackPort
+        }
+        defer { close(socketDescriptor) }
+
+        var reuse: Int32 = 1
+        setsockopt(socketDescriptor, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
+
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = in_port_t(0).bigEndian
+        inet_pton(AF_INET, "127.0.0.1", &address.sin_addr)
+
+        let bindResult = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(socketDescriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard bindResult == 0 else {
+            return fallbackPort
+        }
+
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let nameResult = withUnsafeMutablePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getsockname(socketDescriptor, $0, &length)
+            }
+        }
+        guard nameResult == 0 else {
+            return fallbackPort
+        }
+
+        return Int(UInt16(bigEndian: address.sin_port))
+    }
+}
+
 public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
 
     private var packetTunnelManager: PacketTunnelManager? = nil
+    private let serverDelayRunner = ServerDelayRunner()
 
     private var timer: Timer?
     private var eventSink: FlutterEventSink?
@@ -197,14 +356,7 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
             return
         }
         Task {
-            var error: NSError?
-            var delay: Int64 = -1
-            XRayMeasureOutboundDelay(config, url, &delay, &error)
-            if let error {
-                pluginLog.error("Outbound delay failed: \(error.localizedDescription, privacy: .public)")
-            } else {
-                pluginLog.info("Outbound delay result: \(delay, privacy: .public)")
-            }
+            let delay = await serverDelayRunner.measure(config: config, url: url)
             result(delay)
         }
     }
