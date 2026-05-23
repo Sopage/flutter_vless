@@ -1,91 +1,144 @@
-import 'dart:convert';
-
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_vless/flutter_vless.dart';
 import 'package:flutter_vless/url/vless.dart';
 
+import 'xray_config_test_utils.dart';
+
+const xhttpNoneLink = 'vless://';
+
+const tcpRealityLink = 'vless://';
+
+const visionSeedEncryption =
+    'mlkem768x25519plus.native.1rtt.100-500-2000.75-0-100.80-0-5000.gtmOXB2AN_r905czmOIr6dKq_YDdEJB8RWGqfsXurns';
+
 void main() {
-  test('parses XHTTP extra and defaults empty path', () {
-    // This protects the parser side of the XHTTP investigation. It proves the
-    // generated config contains the fields Xray expects before the iOS provider
-    // applies its packet-tunnel normalization.
-    const url = 'vless://';
+  group('P0 VLESS XHTTP/none', () {
+    test('generates the same transport shape as the provided working Happ link',
+        () {
+      final parsed = FlutterVless.parseFromURL(xhttpNoneLink);
+      final config = decodedConfig(parsed);
+      final inbound =
+          (config['inbounds'] as List<dynamic>).first as Map<String, dynamic>;
+      final server = firstVnextServer(config);
+      final user = firstVnextUser(config);
+      final stream = streamSettings(config);
+      final xhttp = stream['xhttpSettings'] as Map<String, dynamic>;
 
-    final config = jsonDecode(VlessURL(url: url).getFullConfiguration())
-        as Map<String, dynamic>;
-    final inbound =
-        (config['inbounds'] as List<dynamic>).first as Map<String, dynamic>;
-    final routing = config['routing'] as Map<String, dynamic>;
-    final outbounds = config['outbounds'] as List<dynamic>;
-    final proxy = outbounds.first as Map<String, dynamic>;
-    final streamSettings = proxy['streamSettings'] as Map<String, dynamic>;
-    final xhttpSettings =
-        streamSettings['xhttpSettings'] as Map<String, dynamic>;
-    final extra = xhttpSettings['extra'] as Map<String, dynamic>;
-
-    expect(inbound['sniffing'], {
-      'enabled': true,
-      'destOverride': ['http', 'tls', 'quic'],
-      'metadataOnly': false,
+      expect(parsed, isA<VlessURL>());
+      expect(
+        parsed.remark,
+        '',
+      );
+      expect(config.containsKey('dns'), isFalse);
+      expect(config['routing'], {'domainStrategy': 'AsIs'});
+      expect(inbound['protocol'], 'socks');
+      expect(inbound['listen'], '127.0.0.1');
+      expect(inbound['port'], 10807);
+      expect(inbound['settings'], containsPair('udp', true));
+      expect(inbound['sniffing'], {
+        'enabled': true,
+        'destOverride': ['http', 'tls', 'quic'],
+        'metadataOnly': false,
+      });
+      expect(proxyOutbound(config)['protocol'], 'vless');
+      expect(
+        server['address'],
+        '',
+      );
+      expect(server['port'], 2043);
+      expect(user['id'], 'b94da146-a56e-49d7-af4c-a68c9065cbfd');
+      expect(user['encryption'], 'none');
+      expect(user['security'], 'auto');
+      expect(user['level'], 8);
+      expect(user['flow'], '');
+      expect(stream['network'], 'xhttp');
+      expect(stream['security'], 'none');
+      expect(stream.containsKey('tlsSettings'), isFalse);
+      expect(stream.containsKey('realitySettings'), isFalse);
+      expect(xhttp, {
+        'host': 's3.storage.selcloud.ru',
+        'mode': 'stream-up',
+        'path': '/my-bucket',
+      });
     });
-    expect(config.containsKey('dns'), isFalse);
-    expect(routing['domainStrategy'], 'AsIs');
-    expect(xhttpSettings['path'], '/');
-    expect(extra['noGRPCHeader'], isFalse);
-    expect(extra['scMaxConcurrentPosts'], 100);
-    expect(extra['scMaxEachPostBytes'], 1000000);
-    expect(extra['scMinPostsIntervalMs'], 30);
-    expect(extra['xPaddingBytes'], '100-1000');
+
+    test('preserves Vision Seed encryption when it is present in the link', () {
+      final link = xhttpNoneLink.replaceFirst(
+        '&mode=stream-up',
+        '&mode=stream-up&encryption=$visionSeedEncryption',
+      );
+      final config = decodedConfig(VlessURL(url: link));
+
+      expect(firstVnextUser(config)['encryption'], visionSeedEncryption);
+    });
+
+    test('defaults missing XHTTP path/mode and decodes double encoded extra',
+        () {
+      const extra =
+          '%257B%2522noGRPCHeader%2522%253Afalse%252C%2522scMaxConcurrentPosts%2522%253A100%252C%2522xPaddingBytes%2522%253A%2522100-1000%2522%257D';
+      const link =
+          'vless://00000000-0000-0000-0000-000000000000@example.com:8443?type=xhttp&host=cdn.example&security=none&extra=$extra#XHTTP';
+      final config = decodedConfig(VlessURL(url: link));
+      final xhttp =
+          streamSettings(config)['xhttpSettings'] as Map<String, dynamic>;
+
+      expect(xhttp['host'], 'cdn.example');
+      expect(xhttp['mode'], 'auto');
+      expect(xhttp['path'], '/');
+      expect(xhttp['extra'], {
+        'noGRPCHeader': false,
+        'scMaxConcurrentPosts': 100,
+        'xPaddingBytes': '100-1000',
+      });
+    });
+
+    test('drops invalid XHTTP extra instead of emitting malformed JSON', () {
+      const link =
+          'vless://00000000-0000-0000-0000-000000000000@example.com:8443?type=xhttp&security=none&extra=not-json#XHTTP';
+      final config = decodedConfig(VlessURL(url: link));
+      final xhttp =
+          streamSettings(config)['xhttpSettings'] as Map<String, dynamic>;
+
+      expect(xhttp.containsKey('extra'), isFalse);
+    });
   });
 
-  test('parses provided XHTTP stream-up links', () {
-    // These links were observed to connect locally but not fetch usable page
-    // bytes on device. The unit test keeps their JSON shape stable while the
-    // real-device smoke test remains responsible for transport success.
-    const links = [];
+  group('P0 VLESS TCP/Reality', () {
+    test('keeps the known working Reality transport stable', () {
+      final config = decodedConfig(VlessURL(url: tcpRealityLink));
+      final user = firstVnextUser(config);
+      final stream = streamSettings(config);
+      final tcp = stream['tcpSettings'] as Map<String, dynamic>;
+      final reality = stream['realitySettings'] as Map<String, dynamic>;
 
-    for (final link in links) {
-      final config = jsonDecode(VlessURL(url: link.url).getFullConfiguration())
-          as Map<String, dynamic>;
-      final proxy =
-          (config['outbounds'] as List<dynamic>).first as Map<String, dynamic>;
-      final vnext =
-          (proxy['settings'] as Map<String, dynamic>)['vnext'] as List<dynamic>;
-      final server = vnext.first as Map<String, dynamic>;
-      final streamSettings = proxy['streamSettings'] as Map<String, dynamic>;
-      final xhttpSettings =
-          streamSettings['xhttpSettings'] as Map<String, dynamic>;
+      expect(firstVnextServer(config)['address'], '');
+      expect(firstVnextServer(config)['port'], 443);
+      expect(user['id'], 'b94da146-a56e-49d7-af4c-a68c9065cbfd');
+      expect(user['flow'], 'xtls-rprx-vision');
+      expect(user['encryption'], 'none');
+      expect(stream['network'], 'tcp');
+      expect(stream['security'], 'reality');
+      expect(tcp['header'], {'type': 'none'});
+      expect(reality['serverName'], 'vpnforppl.top');
+      expect(reality['fingerprint'], 'chrome');
+      expect(
+          reality['publicKey'], 'gOummriWvIYMJpd5oifBLqxsf_jcWHVsxVI7wnM0rRo');
+      expect(reality['shortId'], '117bee239f0f9c0b');
+      expect(reality['spiderX'], '');
+    });
 
-      expect(server['address'], link.address);
-      expect(server['port'], link.port);
-      expect(streamSettings['network'], 'xhttp');
-      expect(streamSettings['security'], 'none');
-      expect(xhttpSettings['host'], link.host);
-      expect(xhttpSettings['path'], link.path);
-      expect(xhttpSettings['mode'], 'stream-up');
-      expect(xhttpSettings.containsKey('extra'), isFalse);
-    }
-  });
+    test('imports the known working Reality link through the universal parser',
+        () {
+      final parsed = FlutterVless.parse(tcpRealityLink);
+      final config = decodedConfig(parsed);
 
-  test('parses provided Reality TCP link', () {
-    // TCP/Reality is the currently verified good path on iPhone. Keep this
-    // parser case explicit so later XHTTP work does not regress the working
-    // transport while changing shared stream settings.
-    const url = 'vless://';
-
-    final config = jsonDecode(VlessURL(url: url).getFullConfiguration())
-        as Map<String, dynamic>;
-    final proxy =
-        (config['outbounds'] as List<dynamic>).first as Map<String, dynamic>;
-    final streamSettings = proxy['streamSettings'] as Map<String, dynamic>;
-    final realitySettings =
-        streamSettings['realitySettings'] as Map<String, dynamic>;
-
-    expect(streamSettings['network'], 'tcp');
-    expect(streamSettings['security'], 'reality');
-    expect(realitySettings['serverName'], 'pl1.cowjuice.me');
-    expect(realitySettings['fingerprint'], 'qq');
-    expect(realitySettings['publicKey'],
-        'hyWywSIlgux05EhWlFV4QEIOYWkZK55GUuPJBMDXUW0');
-    expect(realitySettings['shortId'], '111aaa24');
+      expect(parsed, isA<VlessURL>());
+      expect(parsed.remark, 'Финляндия ⚡️');
+      expect(firstVnextServer(config)['address'], '');
+      expect(streamSettings(config)['network'], 'tcp');
+      expect(streamSettings(config)['security'], 'reality');
+      expect(firstVnextUser(config)['flow'], 'xtls-rprx-vision');
+      expect(firstVnextUser(config)['encryption'], 'none');
+    });
   });
 }

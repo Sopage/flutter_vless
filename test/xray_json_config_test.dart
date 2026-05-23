@@ -29,8 +29,7 @@ void main() {
             'settings': {
               'vnext': [
                 {
-                  'address':
-                      'sa-c8d2093bf58884a3.sr-a93a7d317d02f67a.r.vpvpn.club',
+                  'address': '',
                   'port': 2043,
                   'users': [
                     {
