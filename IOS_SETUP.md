@@ -1,9 +1,5 @@
 # iOS Setup
 
-`flutter_vless` uses an iOS Packet Tunnel extension. XRay is downloaded from
-GitHub Releases automatically, so you do not need to copy `XRay.xcframework`
-manually.
-
 You still need a real Apple Developer Team because iOS VPN requires signed
 Network Extension and App Group entitlements.
 
