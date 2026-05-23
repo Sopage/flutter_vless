@@ -57,6 +57,23 @@ void main() {
     });
   });
 
+  test('P0 startVless forwards Android proxy-only mode unchanged', () async {
+    const config = '{"outbounds":[]}';
+    final plugin = FlutterVlessAndroid();
+
+    await plugin.startVless(
+      remark: 'Android proxy only',
+      config: config,
+      proxyOnly: true,
+      notificationDisconnectButtonName: 'DISCONNECT',
+    );
+
+    expect(calls, hasLength(1));
+    expect(calls.single.method, 'startVless');
+    expect(calls.single.arguments, containsPair('proxy_only', true));
+    expect(calls.single.arguments, containsPair('config', config));
+  });
+
   test('P0 initializeVless forwards notification icon settings', () async {
     final plugin = FlutterVlessAndroid();
 
