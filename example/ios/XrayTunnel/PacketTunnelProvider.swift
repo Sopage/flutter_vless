@@ -8,6 +8,7 @@
 import NetworkExtension
 import XRay
 import Tun2SocksKit
+import flutter_vless_tunnel_support
 import os
 import Darwin
 
@@ -246,33 +247,16 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     private func parseConfig(jsonData: Data) -> ParsedConfig? {
-        do {
-            guard let configJSON = try JSONSerialization.jsonObject(with: jsonData, options: []) as? [String: Any] else {
-                return nil
-            }
-            var inboundPort: Int?
-            if let inbounds = configJSON["inbounds"] as? [[String: Any]] {
-                for inbound in inbounds {
-                    guard let protocolType = inbound["protocol"] as? String,
-                          let port = inbound["port"] as? Int else { continue }
-                    if protocolType == "socks" || protocolType == "http" {
-                        inboundPort = port
-                        break
-                    }
-                }
-            }
-            guard let inboundPort else { return nil }
-            let serverAddress = parseServerAddress(configJSON: configJSON)
-            if let serverAddress {
-                tunnelLog.info("Parsed outbound server address: \(serverAddress, privacy: .public)")
-            } else {
-                tunnelLog.warning("Could not parse outbound server address; VPN routing loop exclusion will be skipped")
-            }
-            return ParsedConfig(inboundPort: inboundPort, serverAddress: serverAddress)
-        } catch {
-            tunnelLog.error("Failed to parse JSON: \(error.localizedDescription, privacy: .public)")
+        guard let parsed = TunnelXrayConfigPreparer.parseConfig(jsonData: jsonData) else {
+            tunnelLog.error("Failed to parse tunnel Xray config")
+            return nil
         }
-        return nil
+        if let serverAddress = parsed.serverAddress {
+            tunnelLog.info("Parsed outbound server address: \(serverAddress, privacy: .public)")
+        } else {
+            tunnelLog.warning("Could not parse outbound server address; VPN routing loop exclusion will be skipped")
+        }
+        return ParsedConfig(inboundPort: parsed.inboundPort, serverAddress: parsed.serverAddress)
     }
 
     /// Normalizes imported Xray JSON for iOS packet-tunnel constraints.
@@ -282,248 +266,18 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// extension sandbox, DNS must line up with `NEDNSSettings`, and the remote
     /// proxy server must not be reached through the tunnel that depends on it.
     private func prepareXrayConfigForTunnel(_ jsonData: Data) -> Data? {
-        do {
-            guard var configJSON = try JSONSerialization.jsonObject(with: jsonData, options: []) as? [String: Any] else {
-                return nil
-            }
-            // File log paths inside an App Group triggered "operation not
-            // permitted" on device. Empty paths keep Xray logs in memory/os_log
-            // instead of failing startup before HEV can even attach.
-            if var log = configJSON["log"] as? [String: Any] {
-                log["access"] = ""
-                log["error"] = ""
-                log["loglevel"] = "debug"
-                log["dnsLog"] = false
-                configJSON["log"] = log
-            } else {
-                configJSON["log"] = [
-                    "access": "",
-                    "error": "",
-                    "loglevel": "debug",
-                    "dnsLog": false
-                ]
-            }
-            rememberTunnelLog("Disabled XRay file log outputs for packet tunnel")
-            if configJSON.removeValue(forKey: "dns") != nil {
-                tunnelLog.info("Removed Xray DNS config; iOS tunnel DNS settings will handle system DNS")
-            }
-            // `AsIs` avoids Xray doing its own remote DNS decision for the proxy
-            // server after NetworkExtension has already installed route
-            // exclusions. That keeps proxy bootstrap deterministic.
-            if var routing = configJSON["routing"] as? [String: Any] {
-                routing["domainStrategy"] = "AsIs"
-                configJSON["routing"] = routing
-            } else {
-                configJSON["routing"] = ["domainStrategy": "AsIs"]
-            }
-            if var inbounds = configJSON["inbounds"] as? [[String: Any]] {
-                for index in inbounds.indices {
-                    let protocolType = inbounds[index]["protocol"] as? String
-                    guard protocolType == "socks" || protocolType == "http" else {
-                        continue
-                    }
-                    // Tun2socks talks to Xray through SOCKS. Sniffing restores
-                    // HTTP/TLS/QUIC destination metadata, which routing and
-                    // diagnostics need after the original IP packet was wrapped.
-                    inbounds[index]["sniffing"] = [
-                        "enabled": true,
-                        "destOverride": ["http", "tls", "quic"],
-                        "routeOnly": false
-                    ]
-                    tunnelLog.info("Enabled sniffing for inbound index=\(index, privacy: .public) protocol=\(protocolType ?? "nil", privacy: .public)")
-                }
-                configJSON["inbounds"] = inbounds
-            }
-            var proxyUsesXhttp = false
-            if var outbounds = configJSON["outbounds"] as? [[String: Any]] {
-                for index in outbounds.indices {
-                    let tag = outbounds[index]["tag"] as? String
-                    let protocolType = outbounds[index]["protocol"] as? String
-                    guard tag == "proxy" || protocolType != "freedom" && protocolType != "blackhole" else {
-                        continue
-                    }
-                    var streamSettings = outbounds[index]["streamSettings"] as? [String: Any] ?? [:]
-                    let network = streamSettings["network"] as? String ?? "?"
-                    let security = streamSettings["security"] as? String ?? "?"
-                    let normalizedSecurity = security.lowercased()
-                    let hasXhttpExtra = ((streamSettings["xhttpSettings"] as? [String: Any])?["extra"] != nil)
-                    proxyUsesXhttp = network == "xhttp"
-                    tunnelLog.info("Preparing outbound index=\(index, privacy: .public) tag=\(tag ?? "nil", privacy: .public) protocol=\(protocolType ?? "nil", privacy: .public) network=\(network, privacy: .public) security=\(security, privacy: .public) xhttpExtra=\(hasXhttpExtra, privacy: .public)")
-                    if network == "xhttp" && normalizedSecurity == "none" {
-                        // Plain XHTTP has no TLS SNI. Keep the original domain
-                        // in Xray's outbound so remote HTTP routing still sees
-                        // the expected authority; route exclusion resolves the
-                        // same domain to IPv4 later without mutating the config.
-                        rememberTunnelLog("Keeping XHTTP/none proxy domain in Xray config")
-                    } else {
-                        // Resolve the proxy domain before applying VPN settings
-                        // so the provider can exclude the exact server IP from
-                        // the default route. Without this, the first outbound
-                        // connection may loop back into the tunnel and starve
-                        // Xray startup.
-                        if replaceProxyServerDomainWithIPv4(outbound: &outbounds[index]) {
-                            rememberTunnelLog("Resolved proxy server domain to IPv4 in Xray config")
-                        }
-                    }
-                    if var sockopt = streamSettings["sockopt"] as? [String: Any],
-                       sockopt.removeValue(forKey: "domainStrategy") != nil {
-                        if sockopt.isEmpty {
-                            streamSettings.removeValue(forKey: "sockopt")
-                        } else {
-                            streamSettings["sockopt"] = sockopt
-                        }
-                        tunnelLog.info("Removed outbound sockopt.domainStrategy to avoid proxy-server DNS recursion")
-                    }
-                    outbounds[index]["streamSettings"] = streamSettings
-                    break
-                }
-                configJSON["outbounds"] = outbounds
-            }
-            if proxyUsesXhttp {
-                // Browser traffic commonly starts with QUIC over UDP/443. The
-                // provider health check proves XHTTP over TCP can fetch bytes,
-                // but UDP/443 can still make Safari look hung while it waits for
-                // QUIC. Blocking only UDP/443 makes browsers fall back to TCP
-                // HTTPS, without changing TCP/Reality or non-browser UDP flows.
-                let blackholeTag = blackholeOutboundTag(configJSON: configJSON)
-                if ensureUdp443BlockRule(configJSON: &configJSON, outboundTag: blackholeTag) {
-                    rememberTunnelLog("Added XHTTP UDP/443 block rule to force browser TCP fallback")
-                    tunnelLog.info("Added XHTTP UDP/443 block rule outboundTag=\(blackholeTag, privacy: .public)")
-                }
-            }
-            return try JSONSerialization.data(withJSONObject: configJSON, options: [])
-        } catch {
-            tunnelLog.warning("Could not prepare Xray config for iOS tunnel: \(error.localizedDescription, privacy: .public)")
+        guard let prepared = TunnelXrayConfigPreparer.prepare(
+            jsonData: jsonData,
+            resolveIPv4: { resolveIPv4Addresses(for: $0).first }
+        ) else {
+            tunnelLog.warning("Could not prepare Xray config for iOS tunnel")
             return nil
         }
-    }
-
-    private func blackholeOutboundTag(configJSON: [String: Any]) -> String {
-        guard let outbounds = configJSON["outbounds"] as? [[String: Any]] else {
-            return "blackhole"
+        for message in prepared.logMessages {
+            rememberTunnelLog(message)
+            tunnelLog.info("\(message, privacy: .public)")
         }
-        return outbounds.first(where: { outbound in
-            (outbound["protocol"] as? String) == "blackhole"
-        })?["tag"] as? String ?? "blackhole"
-    }
-
-    private func ensureUdp443BlockRule(configJSON: inout [String: Any], outboundTag: String) -> Bool {
-        var routing = configJSON["routing"] as? [String: Any] ?? [:]
-        var rules = routing["rules"] as? [[String: Any]] ?? []
-        let alreadyExists = rules.contains { rule in
-            (rule["type"] as? String) == "field" &&
-            (rule["network"] as? String) == "udp" &&
-            String(describing: rule["port"] ?? "") == "443" &&
-            (rule["outboundTag"] as? String) == outboundTag
-        }
-        if alreadyExists {
-            return false
-        }
-        let rule: [String: Any] = [
-            "type": "field",
-            "network": "udp",
-            "port": "443",
-            "outboundTag": outboundTag
-        ]
-        rules.insert(rule, at: 0)
-        routing["rules"] = rules
-        configJSON["routing"] = routing
-        return true
-    }
-
-    /// Rewrites the primary outbound server domain to an IPv4 literal.
-    ///
-    /// This is not a privacy feature; it is a routing bootstrap guard. iOS needs
-    /// concrete excluded routes before `setTunnelNetworkSettings` finishes, so a
-    /// domain-only proxy server can otherwise become unreachable through its own
-    /// not-yet-established VPN path.
-    private func replaceProxyServerDomainWithIPv4(outbound: inout [String: Any]) -> Bool {
-        guard var settings = outbound["settings"] as? [String: Any] else {
-            return false
-        }
-
-        if var vnext = settings["vnext"] as? [[String: Any]],
-           !vnext.isEmpty,
-           let address = vnext[0]["address"] as? String,
-           !address.isEmpty,
-           !isIPv4Literal(address),
-           !isIPv6Literal(address) {
-            let addresses = resolveIPv4Addresses(for: address)
-            guard let ip = addresses.first else {
-                rememberTunnelLog("Could not resolve proxy server \(address) to IPv4")
-                return false
-            }
-            vnext[0]["address"] = ip
-            settings["vnext"] = vnext
-            outbound["settings"] = settings
-            rememberTunnelLog("Proxy server \(address) resolved to \(ip)")
-            return true
-        }
-
-        if var servers = settings["servers"] as? [[String: Any]],
-           !servers.isEmpty,
-           let address = servers[0]["address"] as? String,
-           !address.isEmpty,
-           !isIPv4Literal(address),
-           !isIPv6Literal(address) {
-            let addresses = resolveIPv4Addresses(for: address)
-            guard let ip = addresses.first else {
-                rememberTunnelLog("Could not resolve proxy server \(address) to IPv4")
-                return false
-            }
-            servers[0]["address"] = ip
-            settings["servers"] = servers
-            outbound["settings"] = settings
-            rememberTunnelLog("Proxy server \(address) resolved to \(ip)")
-            return true
-        }
-
-        if let address = settings["address"] as? String,
-           !address.isEmpty,
-           !isIPv4Literal(address),
-           !isIPv6Literal(address) {
-            let addresses = resolveIPv4Addresses(for: address)
-            guard let ip = addresses.first else {
-                rememberTunnelLog("Could not resolve proxy server \(address) to IPv4")
-                return false
-            }
-            settings["address"] = ip
-            outbound["settings"] = settings
-            rememberTunnelLog("Proxy server \(address) resolved to \(ip)")
-            return true
-        }
-
-        return false
-    }
-
-    private func parseServerAddress(configJSON: [String: Any]) -> String? {
-        guard let outbounds = configJSON["outbounds"] as? [[String: Any]] else {
-            return nil
-        }
-        for outbound in outbounds {
-            let tag = outbound["tag"] as? String
-            let protocolType = outbound["protocol"] as? String
-            guard tag == "proxy" || protocolType != "freedom" && protocolType != "blackhole" else {
-                continue
-            }
-            guard let settings = outbound["settings"] as? [String: Any] else {
-                continue
-            }
-            if let vnext = settings["vnext"] as? [[String: Any]],
-               let address = vnext.first?["address"] as? String,
-               !address.isEmpty {
-                return address
-            }
-            if let servers = settings["servers"] as? [[String: Any]],
-               let address = servers.first?["address"] as? String,
-               !address.isEmpty {
-                return address
-            }
-            if let address = settings["address"] as? String, !address.isEmpty {
-                return address
-            }
-        }
-        return nil
+        return prepared.data
     }
 
     private func buildIPv4ExcludedRoutes(serverAddress: String?, bypassSubnets: [String]) -> [NEIPv4Route] {

@@ -41,6 +41,10 @@ let package = Package(
             name: "XRay",
             url: "https://github.com/XIIIFOX/flutter_vless/releases/download/xray-ios-v26.5.9/XRay.xcframework.zip",
             checksum: "e802245c92f8a2991a79a059385b8cea6b3569bf9ecac67b2504c14c4eb595dd"
+        ),
+        .testTarget(
+            name: "flutter_vless_tunnel_supportTests",
+            dependencies: ["flutter_vless_tunnel_support"]
         )
     ]
 )

@@ -21,6 +21,7 @@
 * Added raw Xray JSON/JSON-array import support so Happ-style configs preserve server-provisioned `users[].encryption` values 1:1.
 * Updated the example importer and real-device smoke test to use the universal parser for both share URLs and raw Xray JSON.
 * Added Dart coverage for VLESS XHTTP/none, VLESS Encryption passthrough, raw Xray JSON import, SS/SOCKS compatibility formats, and iOS/Android MethodChannel arguments.
+* Extracted iOS Packet Tunnel Xray JSON preparation into a Swift testable helper with coverage for log/DNS cleanup, XHTTP UDP/443 routing, proxy server parsing, and VLESS Encryption preservation.
 
 ## 1.0.4
 
