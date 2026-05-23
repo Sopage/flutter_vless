@@ -38,6 +38,7 @@
 - Preserve modern Xray VLESS **Post-Quantum Encryption** values such as `mlkem768x25519plus...` when they are present in URLs or JSON.
 - Measure server delay (ping) for a configuration.
 - Edit configuration (ports, DNS, routing, etc.).
+- Supports Swift Package Manager.
 
 ---
 
@@ -174,7 +175,7 @@ dependencies:
 Follow the platform steps below — without these the plugin cannot run VPN/Network Extension.
 
 ### iOS
-[Setup for IOS](./IOS_SETUP.md)
+[Setup for IOS](https://github.com/XIIIFOX/flutter_vless/blob/main/IOS_SETUP.md)
 
 ### Android
 

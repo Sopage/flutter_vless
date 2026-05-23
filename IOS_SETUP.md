@@ -1,6 +1,6 @@
 # iOS Setup
 
-You still need a real Apple Developer Team because iOS VPN requires signed
+For start you need a real Apple Developer Team because iOS VPN requires signed
 Network Extension and App Group entitlements.
 
 ## Quick Run Example
