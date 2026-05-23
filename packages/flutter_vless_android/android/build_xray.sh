@@ -2,7 +2,7 @@
 
 # Configuration
 XRAY_REPO="https://github.com/XTLS/Xray-core"
-XRAY_VERSION="${XRAY_VERSION:-v26.3.27}"
+XRAY_VERSION="${XRAY_VERSION:-v26.5.9}"
 TARGET_DIR="src/main/jniLibs"
 NDK_PATH="${ANDROID_NDK_HOME:-$HOME/Library/Android/sdk/ndk/28.2.13676358}"
 

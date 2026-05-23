@@ -149,7 +149,7 @@ cd ..
 Upload the generated artifact:
 
 ```bash
-gh release upload xray-ios-v26.3.27 build/xray-ios-release/XRay.xcframework.zip \
+gh release upload xray-ios-v26.5.9 build/xray-ios-release/XRay.xcframework.zip \
   --repo XIIIFOX/flutter_vless \
   --clobber
 ```
