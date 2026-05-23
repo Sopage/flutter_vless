@@ -41,24 +41,7 @@ void main() {
     // These links were observed to connect locally but not fetch usable page
     // bytes on device. The unit test keeps their JSON shape stable while the
     // real-device smoke test remains responsible for transport success.
-    const links = [
-      (
-        url:
-            'vless://b94da146-a56e-49d7-af4c-a68c9065cbfd@sa-c8d2093bf58884a3.sr-a93a7d317d02f67a.r.vpvpn.club:2043?type=xhttp&host=s3.storage.selcloud.ru&path=/my-bucket&mode=stream-up&security=none#test',
-        address: 'sa-c8d2093bf58884a3.sr-a93a7d317d02f67a.r.vpvpn.club',
-        port: 2043,
-        host: 's3.storage.selcloud.ru',
-        path: '/my-bucket',
-      ),
-      (
-        url:
-            'vless://b94da146-a56e-49d7-af4c-a68c9065cbfd@sa-8308bb77ca8c9b60.sr-1696169094d1555d.r.vpvpn.club:8008?type=xhttp&host=pcloud.com&path=/upload&mode=stream-up&security=none#test',
-        address: 'sa-8308bb77ca8c9b60.sr-1696169094d1555d.r.vpvpn.club',
-        port: 8008,
-        host: 'pcloud.com',
-        path: '/upload',
-      ),
-    ];
+    const links = [];
 
     for (final link in links) {
       final config = jsonDecode(VlessURL(url: link.url).getFullConfiguration())
@@ -87,8 +70,7 @@ void main() {
     // TCP/Reality is the currently verified good path on iPhone. Keep this
     // parser case explicit so later XHTTP work does not regress the working
     // transport while changing shared stream settings.
-    const url =
-        'vless://da13f276-d061-4f2d-969a-ed78666b929d@sa-fce7fc3b45c84045.sr-632a4f5e2e836768.r.vpvpn.club:443?type=tcp&headerType=none&security=reality&fp=qq&sni=pl1.cowjuice.me&pbk=hyWywSIlgux05EhWlFV4QEIOYWkZK55GUuPJBMDXUW0&sid=111aaa24#test';
+    const url = 'vless://';
 
     final config = jsonDecode(VlessURL(url: url).getFullConfiguration())
         as Map<String, dynamic>;

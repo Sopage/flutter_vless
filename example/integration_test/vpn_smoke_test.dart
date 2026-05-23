@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_vless/flutter_vless.dart';
@@ -11,6 +13,15 @@ void main() {
     final vless = FlutterVless(
       onStatusChanged: (status) {
         statuses.add(status);
+        // Status output is the cross-platform traffic receipt: an external
+        // Safari/Chrome launch during the test can be correlated with bytes
+        // reported by the native VPN implementation.
+        // ignore: avoid_print
+        print(
+          'VPN_STATUS state=${status.state} '
+          'up=${status.upload} down=${status.download} '
+          'upSpeed=${status.uploadSpeed} downSpeed=${status.downloadSpeed}',
+        );
       },
     );
 
@@ -27,8 +38,7 @@ void main() {
     // green run means more than NEVPNStatus.connected or non-zero counters.
     const url = String.fromEnvironment(
       'VPN_TEST_URL',
-      defaultValue:
-          'vless://6fa7944d-1b22-412b-b766-6dc073b0240b@sa-92cab24c2dec9fd7.sr-eafa7d0213b81797.r.vpvpn.club:443?type=xhttp&host=&path=&mode=auto&extra=%257B%250A%2520%2520%2522noGRPCHeader%2522%2520:%2520false,%250A%2520%2520%2522scMaxConcurrentPosts%2522%2520:%2520100,%250A%2520%2520%2522scMaxEachPostBytes%2522%2520:%25201000000,%250A%2520%2520%2522scMinPostsIntervalMs%2522%2520:%252030,%250A%2520%2520%2522xPaddingBytes%2522%2520:%2520%2522100-1000%2522%250A%257D&security=reality&fp=qq&sni=stats.vk-portal.net&pbk=XBBVeMURFu7jmYJ9MZwjEWgfQlGTnRs0B5So5Fy7jWs&sid=992f3294e2336744#test',
+      defaultValue: 'vless://',
     );
     final parsed = FlutterVless.parseFromURL(url);
 
@@ -45,9 +55,13 @@ void main() {
         description: 'VPN CONNECTED status',
       );
 
+      if (Platform.isAndroid) {
+        await _validateBrowserTraffic(statuses, platformLabel: 'ANDROID');
+        return;
+      }
+
       final delay = await vless.getConnectedServerDelay(
-        url: 'https://www.gstatic.com/generate_204',
-      );
+          url: 'https://www.gstatic.com/generate_204');
       expect(delay, greaterThanOrEqualTo(0));
 
       await Future<void>.delayed(const Duration(seconds: 8));
@@ -66,10 +80,52 @@ void main() {
       expect(snapshot, contains('SOCKS inbound health check: ok'));
       expect(snapshot, contains('SOCKS CONNECT health check: ok'));
       expect(snapshot, contains('SOCKS HTTP health check: ok'));
+
+      const requireBrowserTraffic = bool.fromEnvironment(
+        'VPN_REQUIRE_BROWSER_TRAFFIC',
+        defaultValue: false,
+      );
+      if (requireBrowserTraffic) {
+        await _validateBrowserTraffic(statuses, platformLabel: 'IOS');
+      }
     } finally {
       await vless.stopVless();
     }
   });
+}
+
+/// Leaves the VPN connected while the host test driver opens a real browser:
+/// Chrome on Android or Safari on iOS.
+///
+/// Unlike an Android plugin-specific debug API, the status stream is part of
+/// the public plugin contract and carries the native traffic counters.
+/// A browser page must therefore produce substantially more response data than
+/// the 68-byte failed handshake observed for the affected XHTTP profile.
+Future<void> _validateBrowserTraffic(
+  List<VlessStatus> statuses, {
+  required String platformLabel,
+}) async {
+  const holdSeconds =
+      int.fromEnvironment('VPN_BROWSER_HOLD_SECONDS', defaultValue: 35);
+  const minimumBrowserDownloadBytes = 4096;
+
+  // ignore: avoid_print
+  print('VPN_${platformLabel}_BROWSER_WINDOW_BEGIN seconds=$holdSeconds');
+  await Future<void>.delayed(Duration(seconds: holdSeconds));
+
+  final maximumDownload = statuses.fold<int>(
+    0,
+    (maximum, status) => status.download > maximum ? status.download : maximum,
+  );
+  // ignore: avoid_print
+  print('VPN_${platformLabel}_BROWSER_WINDOW_END maxDown=$maximumDownload');
+
+  expect(
+    maximumDownload,
+    greaterThan(minimumBrowserDownloadBytes),
+    reason: 'The browser must receive page bytes through the VPN tunnel; '
+        'a connect-only result is not a passed browser test.',
+  );
 }
 
 Future<void> _waitFor(

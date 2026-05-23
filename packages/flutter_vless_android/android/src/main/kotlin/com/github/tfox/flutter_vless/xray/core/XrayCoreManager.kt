@@ -40,6 +40,8 @@ object XrayCoreManager {
     private var xrayProcess: Process? = null
     private var countDownTimer: CountDownTimer? = null
     private var seconds = 0
+    private var lastProxyUplink = 0L
+    private var lastProxyDownlink = 0L
 
     private fun nextFreePort(preferredPort: Int, usedPorts: Set<Int>): Int {
         var port = preferredPort
@@ -293,6 +295,8 @@ object XrayCoreManager {
             }
             
             AppConfigs.V2RAY_STATE = AppConfigs.V2RAY_STATES.V2RAY_CONNECTED
+            lastProxyUplink = 0L
+            lastProxyDownlink = 0L
             startTimer(context)
             showNotification(context, config)
             
@@ -378,8 +382,15 @@ object XrayCoreManager {
     }
 
     /**
-     * Queries Xray API for traffic statistics.
-     * Returns [uploadSpeed, downloadSpeed, totalUpload, totalDownload]
+     * Queries Xray's stats API for traffic sent through the application proxy.
+     *
+     * The generated configurations give the remote VLESS outbound the stable
+     * `proxy` tag. Counters for injected `api`, `direct`, and `blackhole`
+     * routes are intentionally ignored: polling the API itself generates
+     * bytes and would otherwise make a broken tunnel look active.
+     *
+     * @return `[uploadSpeed, downloadSpeed, totalUpload, totalDownload]`,
+     * where speed is the delta since the previous one-second timer tick.
      */
     fun getV2rayTraffic(context: Context): LongArray {
         if (!isXrayRunning()) return longArrayOf(0, 0, 0, 0)
@@ -404,21 +415,27 @@ object XrayCoreManager {
                 val json = JSONObject(output)
                 val stats = json.optJSONArray("stat") ?: return longArrayOf(0, 0, 0, 0)
 
-                var uplink = 0L
-                var downlink = 0L
+                var proxyUplink = 0L
+                var proxyDownlink = 0L
 
                 for (i in 0 until stats.length()) {
                     val stat = stats.getJSONObject(i)
                     val name = stat.optString("name")
                     val value = stat.optLong("value")
 
-                    if (name.contains("uplink")) {
-                        uplink += value
-                    } else if (name.contains("downlink")) {
-                        downlink += value
+                    if (name == "outbound>>>proxy>>>traffic>>>uplink") {
+                        proxyUplink = value
+                    } else if (name == "outbound>>>proxy>>>traffic>>>downlink") {
+                        proxyDownlink = value
                     }
                 }
-                return longArrayOf(uplink, downlink, uplink, downlink) 
+
+                val uploadSpeed = (proxyUplink - lastProxyUplink).coerceAtLeast(0L)
+                val downloadSpeed = (proxyDownlink - lastProxyDownlink).coerceAtLeast(0L)
+                lastProxyUplink = proxyUplink
+                lastProxyDownlink = proxyDownlink
+
+                return longArrayOf(uploadSpeed, downloadSpeed, proxyUplink, proxyDownlink)
             } else {
                 Log.d(TAG, "Stats query returned empty output")
             }
@@ -432,6 +449,8 @@ object XrayCoreManager {
         countDownTimer?.cancel()
         countDownTimer = null
         seconds = 0
+        lastProxyUplink = 0L
+        lastProxyDownlink = 0L
     }
 
     private fun sendDisconnectedBroadcast(context: Context) {

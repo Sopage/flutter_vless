@@ -96,13 +96,12 @@ packages:
     source: path
     version: "1.0.5"
   flutter_vless_android:
-    dependency: transitive
+    dependency: "direct overridden"
     description:
-      name: flutter_vless_android
-      sha256: "19ba2b4896fee994deb178b4d89e2648064f78c9b20af12583c57790c1118e0b"
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.0.1"
+      path: "../packages/flutter_vless_android"
+      relative: true
+    source: path
+    version: "1.0.2"
   flutter_vless_android_emulator:
     dependency: "direct main"
     description:
