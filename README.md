@@ -16,10 +16,10 @@
 | Platform | Support | Min Version | Behavior |
 |----------|---------|-------------|----------|
 | Android  | ✅      | API 23 (Android 6.0) | Full functionality |
-| iOS      | ✅      | iOS 10.3 | Full functionality |
+| iOS      | ✅      | iOS 15 | Full functionality |
 | MacOS    | β      | macOS 13 | Full functionality |
-| Windows  | ✅      | Windows 10 | Full functionality |
-
+| Windows  | β      | Windows 10 | Full functionality |
+| Web      | 1/2    | Chrome | Base flutter layer ready |
 
 ## Table of contents
 

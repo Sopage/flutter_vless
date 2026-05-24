@@ -1,3 +1,5 @@
+EXPERIMENTAL
+
 # Xray Integration Setup for Windows
 
 This plugin requires Xray-core version 25.10.15 or later to be available on the system.
@@ -14,6 +16,7 @@ Download the latest Xray-core for Windows (minimum version 25.10.15) from:
 
 Extract the downloaded archive and locate `xray.exe`.
 
+//TODO: auto download xray
 //TODO: add about geoip.dat files for Windows
 //TODO: add release notes about assets folder info
 

@@ -1,3 +1,27 @@
+## 1.1.0
+
+**Major Release: Desktop Support (macOS & Windows)**
+
+* **macOS Implementation**:
+  * Added full support for `ProxyOnly` mode via macOS system proxy configuration (`networksetup`), intercepting TCP traffic across all network interfaces.
+  * Implemented dynamic port allocation and robust XRay config injection for local HTTP and SOCKS inbounds.
+  * Added `XRayQueryStats` C-bindings via an internal gRPC interceptor to support real-time upload/download speed monitoring directly from the XRay core.
+  * Re-engineered the `XRay.xcframework` build pipeline to support dynamic linking for macOS native targets (Apple Silicon & Intel).
+  * Implemented robust lifecycle management to ensure macOS system proxy settings are cleanly restored upon app termination, preventing orphan proxy configurations.
+  * Added extensive in-code documentation explaining the limitations of macOS System Proxy (lack of UDP support) and how it affects QUIC/HTTP3 traffic fallback mechanisms in modern browsers.
+
+* **Windows Implementation**:
+  * Added full support for `ProxyOnly` mode via Windows Registry modification to configure the system proxy.
+  * Built robust background process management to start, monitor, and cleanly terminate the `XRay.exe` core.
+  * Implemented real-time traffic statistics polling using XRay's gRPC Stats API.
+  * Added automatic Windows system proxy cleanup on application exit to prevent network disconnection issues.
+
+* **General / Architecture**:
+  * Stabilized the federated plugin architecture (`flutter_vless_platform_interface`), ensuring seamless API consistency across Android, iOS, macOS, and Windows.
+  * Fixed an issue where injecting XRay API routing rules without a corresponding `api` outbound would break the XRay internal dispatcher and cause connection drops.
+  * Ensured `sniffing` is strictly enabled for injected HTTP/SOCKS proxies to support domain-based routing rules correctly across all platforms.
+  * Updated dependencies and improved general codebase documentation for edge cases.
+
 ## 1.0.5
 
 * Fixed Android VPN startup with configs that already include custom SOCKS/HTTP inbounds.
