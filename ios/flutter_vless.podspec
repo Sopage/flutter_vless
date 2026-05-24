@@ -4,22 +4,45 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'flutter_vless'
-  s.version          = '0.0.1'
-  s.summary          = 'A new Flutter plugin project.'
+  s.version          = '1.0.5'
+  s.summary          = 'Flutter VLESS/VMESS proxy and VPN plugin with XRay core.'
   s.description      = <<-DESC
-A new Flutter plugin project.
+Flutter plugin to run VLESS/VMESS as a local proxy and VPN on iOS with XRay core.
                        DESC
-  s.homepage         = 'http://example.com'
+  s.homepage         = 'https://tfox.dev'
   s.license          = { :file => '../LICENSE' }
-  s.author           = { 'Your Company' => 'email@example.com' }
+  s.author           = { '13FOX' => '13fox.comp@gmail.com' }
   s.source           = { :path => '.' }
-  s.source_files = 'Classes/**/*'
+  s.source_files = 'flutter_vless/Sources/flutter_vless/**/*.swift'
   s.dependency 'Flutter'
-  s.platform = :ios, '11.0'
+  s.platform = :ios, '15.0'
 
   # Flutter.framework does not contain a i386 slice.
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES', 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386' }
-  s.xcconfig = { 'OTHER_LDFLAGS' => '-framework XRay' }
+  s.static_framework = true
+  xray_version = ENV['FLUTTER_VLESS_XRAY_VERSION'] || 'v26.5.9'
+  xray_release_tag = ENV['FLUTTER_VLESS_XRAY_RELEASE_TAG'] || 'xray-ios-v26.5.9'
+  xray_url = ENV['FLUTTER_VLESS_XRAY_URL'] || "https://github.com/XIIIFOX/flutter_vless/releases/download/#{xray_release_tag}/XRay.xcframework.zip"
+  xray_checksum = ENV['FLUTTER_VLESS_XRAY_CHECKSUM'] || 'e802245c92f8a2991a79a059385b8cea6b3569bf9ecac67b2504c14c4eb595dd'
+
+  s.prepare_command = <<-CMD
+    set -e
+    if [ ! -d XRay.xcframework ]; then
+      echo "Downloading flutter_vless XRay #{xray_version} binary..."
+      curl -L "#{xray_url}" -o XRay.xcframework.zip
+      actual_checksum="$(swift package compute-checksum XRay.xcframework.zip)"
+      if [ "$actual_checksum" != "#{xray_checksum}" ]; then
+        echo "XRay.xcframework.zip checksum mismatch"
+        echo "Expected: #{xray_checksum}"
+        echo "Actual:   $actual_checksum"
+        exit 1
+      fi
+      unzip -q XRay.xcframework.zip
+      rm XRay.xcframework.zip
+    fi
+  CMD
+
+  s.preserve_paths = 'XRay.xcframework/**/*'
   s.libraries = 'resolv'
   s.vendored_frameworks = 'XRay.xcframework'
   s.swift_version = '5.0'

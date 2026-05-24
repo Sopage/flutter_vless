@@ -1,1 +1,70 @@
+# build artifacts
+build/
+**/build/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# pub / package cache
+.packages
+.pub/
+.pub-cache/
+
+# example build outputs
+example/build/
+example/android/build/
+example/ios/Pods/
+example/ios/Flutter/Flutter.framework/
+example/ios/Flutter/Flutter.podspec
+
+# iOS example build outputs
+example/ios/Pods/
+example/ios/Podfile.lock
+example/ios/Flutter/AppFrameworkInfo.plist
+example/ios/Flutter/Flutter.podspec
+example/ios/Flutter/Flutter.xcconfig
+example/ios/Flutter/*.xcconfig
+example/ios/Flutter/Generated.xcconfig
+example/ios/Flutter/ephemeral/
+example/ios/Runner.xcworkspace/
+example/ios/Runner.xcodeproj/project.xcworkspace/
+example/ios/Runner.xcodeproj/xcuserdata/
+example/ios/Runner.xcodeproj/xcshareddata/WorkspaceSettings.xcsettings
+example/ios/Runner.xcodeproj/project.pbxproj
+example/ios/Runner/Assets.xcassets/
+example/ios/RunnerTests/
+example/ios/build/
 example/ios/XRay.xcframework/
+
+
+# Android local artifacts you don't want to publish
+android/.gradle/
+android/gradle/
+android/gradle-wrapper.jar
+android/gradlew
+android/gradlew.bat
+android/local.properties
+
+ios/Pods/
+ios/Flutter/ephemeral/
+ios/XRay.xcframework/
+
+packages/
+
+# big native libs and datasets - adjust paths to your tree
+# android/src/main/jniLibs/**
+# android/src/main/assets/**
+
+# common big file types
+# **/*.so
+**/*.a
+**/*.jar
+**/*.aar
+# **/*.dat
+**/*.zip
+
+# screenshots / big media (optional)
+screenshots/
+assets/images/big-*

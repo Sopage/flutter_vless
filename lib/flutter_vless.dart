@@ -2,15 +2,15 @@ import 'dart:convert';
 
 import 'package:flutter_vless/url/shadowsocks.dart';
 import 'package:flutter_vless/url/socks.dart';
+import 'package:flutter_vless/url/subscription.dart';
 import 'package:flutter_vless/url/trojan.dart';
 import 'package:flutter_vless/url/url.dart';
 import 'package:flutter_vless/url/vless.dart';
 import 'package:flutter_vless/url/vmess.dart';
+import 'package:flutter_vless/url/xray_config.dart';
+import 'package:flutter_vless_platform_interface/flutter_vless_platform_interface.dart';
 
-import 'flutter_vless_platform_interface.dart';
-import 'model/vless_status.dart';
-
-export 'model/vless_status.dart';
+export 'package:flutter_vless_platform_interface/flutter_vless_platform_interface.dart';
 export 'url/url.dart';
 
 class FlutterVless {
@@ -19,19 +19,19 @@ class FlutterVless {
   /// This method is called when FlutterVless status has changed.
   final void Function(VlessStatus status) onStatusChanged;
 
-  /// Request VPN service permission.
-  Future<bool> requestPermission() async {
-    return await FlutterVlessPlatform.instance.requestPermission();
+  /// Requests VPN permission from the user (Android).
+  Future<bool> requestPermission() {
+    return VlessPlatform.instance.requestPermission();
   }
 
-  /// You must initialize FlutterVless before using it.
+  /// Initializes the VPN plugin with platform-specific configuration.
   Future<void> initializeVless({
     String notificationIconResourceType = "mipmap",
     String notificationIconResourceName = "ic_launcher",
     String providerBundleIdentifier = "",
     String groupIdentifier = "",
   }) async {
-    await FlutterVlessPlatform.instance.initializeVless(
+    await VlessPlatform.instance.initializeVless(
       onStatusChanged: onStatusChanged,
       notificationIconResourceType: notificationIconResourceType,
       notificationIconResourceName: notificationIconResourceName,
@@ -87,7 +87,7 @@ class FlutterVless {
       throw ArgumentError('The provided string is not valid JSON');
     }
 
-    await FlutterVlessPlatform.instance.startVless(
+    await VlessPlatform.instance.startVless(
       remark: remark,
       config: config,
       blockedApps: blockedApps,
@@ -99,7 +99,7 @@ class FlutterVless {
 
   /// Stop FlutterVless service.
   Future<void> stopVless() async {
-    await FlutterVlessPlatform.instance.stopVless();
+    await VlessPlatform.instance.stopVless();
   }
 
   /// This method returns the real server delay of the configuration.
@@ -113,19 +113,49 @@ class FlutterVless {
     } catch (_) {
       throw ArgumentError('The provided string is not valid JSON');
     }
-    return await FlutterVlessPlatform.instance
+    return await VlessPlatform.instance
         .getServerDelay(config: config, url: url);
   }
 
   /// This method returns the connected server delay.
   Future<int> getConnectedServerDelay(
       {String url = 'https://google.com/generate_204'}) async {
-    return await FlutterVlessPlatform.instance.getConnectedServerDelay(url);
+    return await VlessPlatform.instance.getConnectedServerDelay(url);
   }
 
   // This method returns the FlutterVless Core version.
   Future<String> getCoreVersion() async {
-    return await FlutterVlessPlatform.instance.getCoreVersion();
+    return await VlessPlatform.instance.getCoreVersion();
+  }
+
+  /// Parse a share link, raw Xray JSON config, or subscription payload.
+  ///
+  /// Supports vmess://, vless://, trojan://, ss://, socks://, raw Xray JSON,
+  /// base64 share-link subscriptions, Clash YAML, and sing-box JSON. Prefer
+  /// this over [parseFromURL] for clipboard/subscription imports: raw JSON can
+  /// carry VLESS Encryption keys that are not recoverable from a bare
+  /// `vless://` link. If a subscription contains multiple supported profiles,
+  /// this returns the first one; use [parseMany] to keep the full list.
+  static FlutterVlessURL parse(String input) {
+    final trimmed = input.trim();
+    if (_isSingleShareLink(trimmed)) {
+      return parseFromURL(trimmed);
+    }
+    return parseMany(trimmed).first;
+  }
+
+  /// Parse every supported profile from a subscription payload.
+  ///
+  /// Unsupported protocols are skipped intentionally. This plugin embeds Xray,
+  /// so sing-box-only protocols such as Hysteria2, TUIC, ShadowTLS, AnyTLS, and
+  /// WireGuard should remain explicit product-scope gaps instead of silently
+  /// producing broken Xray JSON.
+  static List<FlutterVlessURL> parseMany(String input) {
+    return VlessSubscriptionParser.parseMany(
+      input: input,
+      parseUrl: parseFromURL,
+      parseJson: (json) => XrayJsonConfig(url: json),
+    );
   }
 
   /// parse FlutterVlessURL object from Vless share link
@@ -146,5 +176,17 @@ class FlutterVless {
       default:
         throw ArgumentError('url is invalid');
     }
+  }
+
+  static bool _isSingleShareLink(String input) {
+    if (input.contains('\n') || input.contains('\r')) {
+      return false;
+    }
+    final separator = input.indexOf('://');
+    if (separator <= 0) {
+      return false;
+    }
+    return const {'vmess', 'vless', 'trojan', 'ss', 'socks'}
+        .contains(input.substring(0, separator).toLowerCase());
   }
 }

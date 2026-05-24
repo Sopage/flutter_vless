@@ -68,8 +68,8 @@ class _HomePageState extends State<HomePage> {
         .initializeVless(
       notificationIconResourceType: 'mipmap',
       notificationIconResourceName: 'ic_launcher',
-      providerBundleIdentifier: 'dev.tfox.example.flutterVless',
-      groupIdentifier: 'group.dev.tfox.example.flutterVless',
+      providerBundleIdentifier: 'dev.tfox.flutterXrayExample',
+      groupIdentifier: 'group.dev.tfox.flutterXray',
     )
         .then((_) async {
       coreVersion = await flutterVless.getCoreVersion();
@@ -93,7 +93,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _connect() async {
-    if (!await flutterVless.requestPermission()) {
+    if (!proxyOnly && !await flutterVless.requestPermission()) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('Permission Denied'),
@@ -120,7 +120,7 @@ class _HomePageState extends State<HomePage> {
       try {
         final text =
             (await Clipboard.getData('text/plain'))?.text?.trim() ?? '';
-        final FlutterVlessURL parsed = FlutterVless.parseFromURL(text);
+        final FlutterVlessURL parsed = FlutterVless.parse(text);
         remark = parsed.remark;
         config.text = parsed.getFullConfiguration();
         if (!mounted) return;

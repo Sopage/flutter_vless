@@ -1,62 +1,170 @@
-> Use the [example/](./example/) folder to run it on iOS or follow the instructions below. If that doesn't work, try running the project from the example directory—it usually helps identify the cause of any issues.
+# iOS Setup
+
+For start you need a real Apple Developer Team because iOS VPN requires signed
+Network Extension and App Group entitlements.
+
+## Quick Run Example
+
+The bundled example already contains the `XrayTunnel` extension target.
+
+Use a real iPhone. Packet Tunnel is not a reliable simulator flow.
+
+```bash
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+cd example
+flutter pub get
+open ios/Runner.xcworkspace
+```
+
+In Xcode:
+
+- Select the `Runner` target and set your **Team**.
+- Select the `XrayTunnel` target and set the same **Team**.
+- Make sure both targets have:
+  - **App Groups**
+  - **Network Extensions** with **Packet Tunnel**
+- Use the same App Group on both targets:
+
+```text
+group.dev.tfox.flutterVlessExample
+```
+
+Then run from Xcode on your iPhone.
+
+You can also run from CLI after signing is configured:
+
+```bash
+flutter run -d <your-iphone-id>
+```
 
 
-## Installation
 
-- Copy the [XRay.xcframework](./example/ios/XRay.xcframework/) folder and paste it into the iOS folder of your project. 
 
-## Podfile
-Open ios/Podfile and set the platform to iOS 15
-```Podfile
-# Uncomment this line to define a global platform for your project
-platform :ios, '15.0'
+## Setup In Your App
+
+### 1. Use Swift Package Manager
+
+Flutter 3.44+ enables SwiftPM by default. For older Flutter versions:
+
+```bash
+flutter config --enable-swift-package-manager
+```
+
+### 2. Add the dependency
+
+```yaml
+dependencies:
+  flutter_vless: ^1.0.5
 ```
 
 ```bash
-cd ios/
+flutter pub get
+```
+
+### 3. Create the tunnel extension
+
+Open `ios/Runner.xcworkspace` in Xcode and add a new target:
+
+- Target type: **Network Extension**
+- Template: **Packet Tunnel Provider**
+- Product Name: `XrayTunnel`
+- Bundle Identifier: your app id plus `.XrayTunnel`
+
+Example:
+
+```text
+App:    com.example.myapp
+Tunnel: com.example.myapp.XrayTunnel
+Group:  group.com.example.myapp
+```
+
+### 4. Enable capabilities
+
+On both `Runner` and `XrayTunnel`, enable:
+
+- **App Groups**
+- **Network Extensions** with **Packet Tunnel**
+
+Use the same App Group on both targets.
+
+### 5. Add SwiftPM products
+
+Add package products to targets:
+
+- `Runner`: `flutter-vless`
+- `XrayTunnel`: `flutter-vless-tunnel-support`
+
+The tunnel support package links `XRay`, `Tun2SocksKit`, `Tun2SocksKitC`, and
+`libresolv`.
+
+### 6. Add PacketTunnelProvider
+
+Copy this file into your `XrayTunnel` target:
+
+```text
+example/ios/XrayTunnel/PacketTunnelProvider.swift
+```
+
+Make sure it belongs to the `XrayTunnel` target.
+
+### 7. Initialize in Dart
+
+Pass the base app bundle id. The plugin appends `.XrayTunnel` internally.
+
+```dart
+await flutterVless.initializeVless(
+  providerBundleIdentifier: 'com.example.myapp',
+  groupIdentifier: 'group.com.example.myapp',
+);
+```
+
+Run on a real iPhone:
+
+```bash
+flutter run -d <your-iphone-id>
+```
+
+## CocoaPods Fallback
+
+If you disabled SwiftPM, CocoaPods downloads the same XRay release artifact
+during `pod install`.
+
+```bash
+flutter config --no-enable-swift-package-manager
+cd ios
 pod install
 ```
 
-## Xcode Setup
+## Maintainers: Publish XRay
 
-- Open Runner.xcworkspace with Xcode.
+When XRay is rebuilt:
 
-### Runner target
-- Set the Minimum Deployment Target to iOS 15.
-- Go to the Signing & Capabilities tab.
-- Add the App Group capability.
-- Add the Network Extension capability and activate Packet Tunnel.
-
-
-### XrayTunnel target
-- Add a Network Extension Target with the name __XrayTunnel__
-- Set the Minimum Deployment Target to iOS 15.
-- Add the App Group capability.
-- Add the Network Extension capability and activate Packet Tunnel.
-
-#### Add XrayTunnel dependencies
-- Open the Runner project and go to the Package Dependencies tab.
-- Add https://github.com/EbrahimTahernejad/Tun2SocksKit to the XrayTunnel Target.
-- Open the __General__ tab of the __XrayTunnel__ Target.
-- Add __XRay.xcframework__ to Frameworks and Libraries.
-- Add __libresolv.tbd__ to Frameworks and Libraries.
-
-
-<br>
-
-- Open ios/XrayTunnel/PacketTunnelProvider.swift.
-- Paste the content of [this file](./example/ios/XrayTunnel/PacketTunnelProvider.swift).
-- Open the Runner Target > Build Phases tab.
-- Move __Embed Foundation Extensions__ to the bottom of __Copy Bundle Resources__.
-
-
-
-## flutter
-Pass the providerBundleIdentifier and groupIdentifier to the initializeVless function:
-
-``` dart
-await flutterVless.initializeVless(
-    providerBundleIdentifier: "IOS Provider bundle indentifier",
-    groupIdentifier: "IOS Group Identifier",
-);
+```bash
+cd ios
+./build_xray_ios.sh
+cd ..
+./tool/create_xray_ios_release.sh
 ```
+
+Upload the generated artifact:
+
+```bash
+gh release upload xray-ios-v26.5.9 build/xray-ios-release/XRay.xcframework.zip \
+  --repo XIIIFOX/flutter_vless \
+  --clobber
+```
+
+If the script prints a new checksum, update:
+
+```text
+ios/flutter_vless/Package.swift
+ios/flutter_vless.podspec
+```
+
+Before publishing:
+
+```bash
+dart pub publish --dry-run
+```
+
+The pub archive must not include `ios/XRay.xcframework`.

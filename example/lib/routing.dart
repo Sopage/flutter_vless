@@ -328,17 +328,17 @@ com.example.sensitiveapp
 
     if (raw.startsWith('*.')) {
       final rest = raw.substring(2);
-      return 'regexp:\\.' + RegExp.escape(rest) + r'$';
+      return 'regexp:\\.${RegExp.escape(rest)}\$';
     }
 
     if (raw.startsWith('.')) {
       final escaped = RegExp.escape(raw);
-      return 'regexp:' + escaped + r'$';
+      return 'regexp:$escaped\$';
     }
 
     if (raw.contains('*')) {
       final escaped = RegExp.escape(raw).replaceAll('\\*', '.*');
-      return 'regexp:^' + escaped + r'$';
+      return 'regexp:^$escaped\$';
     }
 
     return 'domain:$raw';

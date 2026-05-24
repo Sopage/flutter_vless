@@ -13,18 +13,21 @@
         {
             "name": "example",
             "request": "launch",
-            "type": "dart"
+            "type": "dart",
+            "program": "lib/main.dart"
         },
         {
             "name": "example (profile mode)",
             "request": "launch",
             "type": "dart",
+            "program": "lib/main.dart",
             "flutterMode": "profile"
         },
         {
             "name": "example (release mode)",
             "request": "launch",
             "type": "dart",
+            "program": "lib/main.dart",
             "flutterMode": "release"
         }
     ]

@@ -40,5 +40,13 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+    target.build_configurations.each do |config|
+      # SwiftPM products used by the example require iOS 15+. CocoaPods can
+      # otherwise leave generated Pod targets at an older default such as 13.0,
+      # which makes Xcode fail with:
+      # "The package product 'flutter-vless' requires minimum platform version
+      # 15.0 for the iOS platform, but this target supports 13.0".
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+    end
   end
 end

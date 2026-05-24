@@ -12,6 +12,11 @@ abstract class FlutterVlessURL {
   String get address => '';
   String get remark => '';
 
+  // This SOCKS inbound is the contract used by the iOS packet tunnel:
+  // HEV/tun2socks forwards device packets here, then Xray sends them to the
+  // selected VLESS outbound. Sniffing is enabled by default so the wrapped
+  // traffic still carries HTTP/TLS/QUIC destination metadata for routing and
+  // diagnostics.
   Map<String, dynamic> inbound = {
     "tag": "in_proxy",
     "port": 10807,
@@ -25,7 +30,11 @@ abstract class FlutterVlessURL {
       "port": null,
       "network": null
     },
-    "sniffing": {"enabled": false, "destOverride": null, "metadataOnly": null},
+    "sniffing": {
+      "enabled": true,
+      "destOverride": ["http", "tls", "quic"],
+      "metadataOnly": false
+    },
     "streamSettings": null,
     "allocate": null
   };
@@ -49,7 +58,7 @@ abstract class FlutterVlessURL {
       "network": null,
       "address": null,
       "port": null,
-      "domainStrategy": "UseIp",
+      "domainStrategy": "AsIs",
       "redirect": null,
       "userLevel": null,
       "inboundTag": null,
@@ -85,12 +94,11 @@ abstract class FlutterVlessURL {
     "mux": null
   };
 
-  Map<String, dynamic> dns = {
-    "servers": ["8.8.8.8", "8.8.4.4"]
-  };
-
+  // Keep generated configs deterministic for iOS. The packet tunnel installs
+  // concrete route exclusions before Xray starts, so Xray should not introduce
+  // another DNS strategy that can resolve the proxy server differently.
   Map<String, dynamic> routing = {
-    "domainStrategy": "UseIp",
+    "domainStrategy": "AsIs",
     "domainMatcher": null,
     "rules": [],
     "balancers": []
@@ -100,7 +108,6 @@ abstract class FlutterVlessURL {
         "log": log,
         "inbounds": [inbound],
         "outbounds": [outbound1, outbound2, outbound3],
-        "dns": dns,
         "routing": routing,
       };
 
@@ -130,6 +137,11 @@ abstract class FlutterVlessURL {
     "sockopt": null
   };
 
+  /// Populates Xray `streamSettings` from VLESS URL query parameters.
+  ///
+  /// These settings feed both normal Xray configs and the iOS packet tunnel.
+  /// The iOS provider later normalizes DNS/logging, but the transport shape
+  /// created here is still the source of truth for TCP/Reality vs XHTTP tests.
   String populateTransportSettings({
     required String transport,
     required String? headerType,
@@ -140,6 +152,7 @@ abstract class FlutterVlessURL {
     required String? key,
     required String? mode,
     required String? serviceName,
+    String? extra,
   }) {
     String sni = '';
     streamSetting['network'] = transport;
@@ -227,15 +240,55 @@ abstract class FlutterVlessURL {
       };
       sni = host ?? "";
     } else if (transport == 'xhttp') {
+      // XHTTP links often rely on server-specific knobs in `extra`. Preserving
+      // them is required for compatibility, but it is not proof the transport
+      // will work on iOS; the provider HTTP health check is the real signal.
       streamSetting['network'] = 'xhttp';
+      final xhttpExtra = decodeXhttpExtra(extra);
       streamSetting['xhttpSettings'] = {
         "host": host ?? "",
         "mode": mode ?? "auto",
-        "path": path ?? "/"
+        "path": emptyToDefault(path, "/"),
+        if (xhttpExtra != null) "extra": xhttpExtra,
       };
       sni = host ?? "";
     }
     return sni;
+  }
+
+  String emptyToDefault(String? value, String fallback) {
+    return value == null || value.isEmpty ? fallback : value;
+  }
+
+  /// Decodes the XHTTP `extra` JSON object from URL query parameters.
+  ///
+  /// Some subscriptions double-encode this field, so decoding is attempted a
+  /// few times before parsing JSON. Invalid data is dropped instead of emitting
+  /// malformed Xray config, which would hide the actual transport failure.
+  Map<String, dynamic>? decodeXhttpExtra(String? extra) {
+    if (extra == null || extra.isEmpty) {
+      return null;
+    }
+
+    String candidate = extra;
+    for (var i = 0; i < 3; i++) {
+      try {
+        final decoded = Uri.decodeComponent(candidate);
+        if (decoded == candidate) {
+          break;
+        }
+        candidate = decoded;
+      } catch (_) {
+        break;
+      }
+    }
+
+    try {
+      final decoded = jsonDecode(candidate);
+      return decoded is Map<String, dynamic> ? decoded : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   void populateTlsSettings({
