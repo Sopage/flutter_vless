@@ -126,6 +126,10 @@ final class PacketTunnelProvider: FlutterVlessPacketTunnelProvider {}
 \t<array>
 \t\t<string>$groupId</string>
 \t</array>
+\t<key>com.apple.security.network.client</key>
+\t<true/>
+\t<key>com.apple.security.network.server</key>
+\t<true/>
 </dict>
 </plist>
 ''');

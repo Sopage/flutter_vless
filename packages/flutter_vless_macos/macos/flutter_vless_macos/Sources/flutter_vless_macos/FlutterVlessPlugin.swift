@@ -17,6 +17,97 @@ private let pluginLog = Logger(
     category: "FlutterVlessPlugin"
 )
 
+private final class PluginDebugStore {
+    static let shared = PluginDebugStore()
+
+    private let lock = NSLock()
+    private var fileURL: URL?
+
+    func configure(groupIdentifier: String?) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let groupIdentifier,
+              !groupIdentifier.isEmpty,
+              let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupIdentifier) else {
+            fileURL = nil
+            return
+        }
+        fileURL = containerURL.appendingPathComponent("flutter_vless_app_debug.log")
+        try? "FlutterVless app debug log\n".write(to: fileURL!, atomically: true, encoding: .utf8)
+    }
+
+    func append(_ message: String) {
+        let line = "\(ISO8601DateFormatter().string(from: Date())) \(message)"
+        lock.lock()
+        defer { lock.unlock() }
+        guard let fileURL else {
+            return
+        }
+        if let handle = try? FileHandle(forWritingTo: fileURL) {
+            defer { try? handle.close() }
+            try? handle.seekToEnd()
+            if let data = "\(line)\n".data(using: .utf8) {
+                try? handle.write(contentsOf: data)
+            }
+        }
+    }
+
+    func snapshot(maxLines: Int = 220) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let fileURL,
+              let data = try? Data(contentsOf: fileURL),
+              let content = String(data: data, encoding: .utf8) else {
+            return ""
+        }
+        return content.split(separator: "\n").suffix(maxLines).joined(separator: "\n")
+    }
+}
+
+private func pluginDebug(_ message: String) {
+    PluginDebugStore.shared.append(message)
+    pluginLog.info("\(message, privacy: .public)")
+}
+
+private struct SystemNetworkDiagnostics {
+    static func logSnapshot(reason: String) {
+        DispatchQueue.global(qos: .utility).async {
+            let sections: [(String, String, [String])] = [
+                ("route-default", "/sbin/route", ["-n", "get", "default"]),
+                ("route-dns-1.1.1.1", "/sbin/route", ["-n", "get", "1.1.1.1"]),
+                ("route-dns-8.8.8.8", "/sbin/route", ["-n", "get", "8.8.8.8"]),
+                ("netstat-inet", "/usr/sbin/netstat", ["-rn", "-f", "inet"]),
+                ("netstat-inet6", "/usr/sbin/netstat", ["-rn", "-f", "inet6"]),
+                ("scutil-dns", "/usr/sbin/scutil", ["--dns"])
+            ]
+            var output = ["System network snapshot reason=\(reason)"]
+            for (name, executable, arguments) in sections {
+                output.append("--- \(name) ---")
+                output.append(run(executable: executable, arguments: arguments))
+            }
+            pluginDebug(output.joined(separator: "\n"))
+        }
+    }
+
+    private static func run(executable: String, arguments: [String]) -> String {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: executable)
+        task.arguments = arguments
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = pipe
+        do {
+            try task.run()
+            task.waitUntilExit()
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let text = String(data: data, encoding: .utf8) ?? ""
+            return String(text.prefix(6000))
+        } catch {
+            return "failed: \(error.localizedDescription)"
+        }
+    }
+}
+
 // MARK: - System Proxy Helper (macOS only)
 private struct SystemProxyHelper {
     static func getNetworkServices() -> [String] {
@@ -323,7 +414,7 @@ private actor ServerDelayRunner {
         }
 
         var request = URLRequest(url: probeURL)
-        request.httpMethod = "HEAD"
+        request.httpMethod = "GET"
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
         request.timeoutInterval = 5
 
@@ -631,6 +722,7 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     private var downloadSpeed: Int = 0
     private var lastTrafficLogDate: Date = .distantPast
     private var lastProviderDebugLogDate: Date = .distantPast
+    private var lastNetworkSnapshotLogDate: Date = .distantPast
 
     public static func register(with registrar: FlutterPluginRegistrar) {
         let channel = FlutterMethodChannel(name: "flutter_vless", binaryMessenger: registrar.messenger)
@@ -680,21 +772,38 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     }
 
     public func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
-        pluginLog.info("Status stream attached")
+        pluginDebug("Status stream attached mainThread=\(Thread.isMainThread)")
         self.eventSink = events
+        emitStatus(duration: 0, state: "DISCONNECTED", reason: "stream-attached")
         return nil
     }
 
     public func onCancel(withArguments arguments: Any?) -> FlutterError? {
-        pluginLog.info("Status stream detached")
+        pluginDebug("Status stream detached mainThread=\(Thread.isMainThread)")
         self.eventSink = nil
         return nil
     }
 
-    private func startTimer() {
-        pluginLog.info("Starting traffic polling timer")
+    private func startTimer(reason: String = "unspecified") {
+        guard Thread.isMainThread else {
+            pluginDebug("startTimer requested off main thread reason=\(reason); dispatching to main")
+            DispatchQueue.main.async { [weak self] in
+                self?.startTimer(reason: reason)
+            }
+            return
+        }
+
+        if self.timer != nil {
+            pluginDebug("Traffic polling timer already running reason=\(reason) eventSink=\(self.eventSink != nil) vpnStatus=\(self.packetTunnelManager?.status?.rawValue ?? -1)")
+            emitStatus(duration: currentDurationSeconds(), state: "CONNECTED", reason: "timer-already-running:\(reason)")
+            return
+        }
+
+        pluginDebug("Starting traffic polling timer reason=\(reason) mainThread=\(Thread.isMainThread) eventSink=\(self.eventSink != nil) vpnStatus=\(self.packetTunnelManager?.status?.rawValue ?? -1)")
         self.timer?.invalidate()
-        self.timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true, block: { [weak self] _ in
+        emitStatus(duration: currentDurationSeconds(), state: "CONNECTED", reason: "timer-start:\(reason)")
+        logSystemNetworkSnapshot(reason: "timer-start:\(reason)")
+        let timer = Timer(timeInterval: 1, repeats: true, block: { [weak self] _ in
             guard let self = self else { return }
             if self.proxyOnlyRunner.isRunning {
                 let elapsed = Date().timeIntervalSince(self.proxyOnlyRunner.connectedDate ?? Date())
@@ -709,48 +818,93 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
                 self.totalDownload = Int(currentDown)
                 self.uploadSpeed = Int(upSpeed)
                 self.downloadSpeed = Int(downSpeed)
-                self.eventSink?(["\(seconds)", "\(self.uploadSpeed)", "\(self.downloadSpeed)", "\(self.totalUpload)", "\(self.totalDownload)", "CONNECTED"])
+                self.emitStatus(duration: seconds, state: "CONNECTED", reason: "timer-proxy")
+                return
+            }
+
+            if let status = self.packetTunnelManager?.status,
+               status == .invalid || status == .disconnected {
+                pluginDebug("Packet tunnel is no longer active while polling status=\(status.rawValue)")
+                self.stopTimer(reason: "vpn-status-\(status.rawValue)")
                 return
             }
 
             let elapsed = Date().timeIntervalSince(self.packetTunnelManager?.connectedDate ?? Date())
             let seconds = Int(elapsed)
-            self.eventSink?(["\(seconds)", "\(self.uploadSpeed)", "\(self.downloadSpeed)", "\(self.totalUpload)", "\(self.totalDownload)", "CONNECTED"])
+            self.emitStatus(duration: seconds, state: "CONNECTED", reason: "timer-vpn")
             Task{
                 do{
                     let response =  try await self.packetTunnelManager?.sendProviderMessage(data: "xray_traffic".data(using: .utf8)!)
                     if response != nil{
                         let traffic = String(decoding: response!, as: UTF8.self)
                         let parts = traffic.split(separator: ",")
-                        if let up = Int(parts[0]), let down = Int(parts[1]) {
+                        if parts.count >= 2, let up = Int(parts[0]), let down = Int(parts[1]) {
                             self.uploadSpeed = up - self.totalUpload
                             self.downloadSpeed = down - self.totalDownload
                             self.totalUpload = up
                             self.totalDownload = down
                             if Date().timeIntervalSince(self.lastTrafficLogDate) >= 5 {
                                 self.lastTrafficLogDate = Date()
-                                pluginLog.info("Traffic stats up=\(up, privacy: .public) down=\(down, privacy: .public) upSpeed=\(self.uploadSpeed, privacy: .public) downSpeed=\(self.downloadSpeed, privacy: .public)")
+                                pluginDebug("Traffic stats up=\(up) down=\(down) upSpeed=\(self.uploadSpeed) downSpeed=\(self.downloadSpeed) vpnStatus=\(self.packetTunnelManager?.status?.rawValue ?? -1)")
                                 self.logProviderDebugSnapshot()
                             }
+                        } else {
+                            pluginDebug("Traffic response parse failed raw=\(traffic)")
                         }
+                    } else {
+                        pluginDebug("Traffic polling returned nil provider response")
                     }
                 }catch{
-                    pluginLog.error("Error polling traffic: \(error.localizedDescription, privacy: .public)")
+                    pluginDebug("Error polling traffic: \(error.localizedDescription)")
                 }
             }
         })
+        self.timer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
-    private func stopTimer() {
-        pluginLog.info("Stopping traffic polling timer")
+    private func stopTimer(reason: String = "unspecified") {
+        guard Thread.isMainThread else {
+            pluginDebug("stopTimer requested off main thread reason=\(reason); dispatching to main")
+            DispatchQueue.main.async { [weak self] in
+                self?.stopTimer(reason: reason)
+            }
+            return
+        }
+
+        pluginDebug("Stopping traffic polling timer reason=\(reason) hadTimer=\(self.timer != nil) eventSink=\(self.eventSink != nil)")
         self.timer?.invalidate()
         self.timer = nil
-        self.eventSink?(["0", "0", "0", "0", "0", "DISCONNECTED"])
+        emitStatus(duration: 0, state: "DISCONNECTED", reason: "timer-stop:\(reason)")
         self.uploadSpeed = 0
         self.downloadSpeed = 0
         self.totalUpload = 0
         self.totalDownload = 0
         self.lastProviderDebugLogDate = .distantPast
+        self.lastNetworkSnapshotLogDate = .distantPast
+    }
+
+    private func currentDurationSeconds() -> Int {
+        if proxyOnlyRunner.isRunning {
+            return Int(Date().timeIntervalSince(proxyOnlyRunner.connectedDate ?? Date()))
+        }
+        return Int(Date().timeIntervalSince(packetTunnelManager?.connectedDate ?? Date()))
+    }
+
+    private func emitStatus(duration: Int, state: String, reason: String) {
+        let payload = ["\(duration)", "\(uploadSpeed)", "\(downloadSpeed)", "\(totalUpload)", "\(totalDownload)", state]
+        if Date().timeIntervalSince(lastTrafficLogDate) >= 5 || state != "CONNECTED" {
+            pluginDebug("Status event reason=\(reason) payload=\(payload.joined(separator: ",")) eventSink=\(eventSink != nil) vpnStatus=\(packetTunnelManager?.status?.rawValue ?? -1)")
+        }
+        eventSink?(payload)
+    }
+
+    private func logSystemNetworkSnapshot(reason: String, force: Bool = false) {
+        guard force || Date().timeIntervalSince(lastNetworkSnapshotLogDate) >= 10 else {
+            return
+        }
+        lastNetworkSnapshotLogDate = Date()
+        SystemNetworkDiagnostics.logSnapshot(reason: reason)
     }
 
     private func logProviderDebugSnapshot() {
@@ -761,7 +915,11 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         Task {
             do {
                 guard let response = try await self.packetTunnelManager?.sendProviderMessage(data: "xray_debug".data(using: .utf8)!) else {
-                    pluginLog.warning("Provider debug snapshot unavailable")
+                    if let snapshot = self.packetTunnelManager?.readSharedDebugLog(), !snapshot.isEmpty {
+                        pluginLog.info("Provider shared debug snapshot:\n\(snapshot, privacy: .public)")
+                    } else {
+                        pluginLog.warning("Provider debug snapshot unavailable")
+                    }
                     return
                 }
                 let snapshot = String(decoding: response, as: UTF8.self)
@@ -770,6 +928,9 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
                 }
             } catch {
                 pluginLog.error("Provider debug snapshot failed: \(error.localizedDescription, privacy: .public)")
+                if let snapshot = self.packetTunnelManager?.readSharedDebugLog(), !snapshot.isEmpty {
+                    pluginLog.info("Provider shared debug snapshot:\n\(snapshot, privacy: .public)")
+                }
             }
         }
     }
@@ -833,13 +994,13 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         Task {
             do {
                 guard let response = try await packetTunnelManager?.sendProviderMessage(data: "xray_debug".data(using: .utf8)!) else {
-                    result("")
+                    result(packetTunnelManager?.readSharedDebugLog() ?? "")
                     return
                 }
                 result(String(decoding: response, as: UTF8.self))
             } catch {
                 pluginLog.error("Provider debug snapshot request failed: \(error.localizedDescription, privacy: .public)")
-                result(FlutterError(code: "PROVIDER_DEBUG_FAILED", message: error.localizedDescription, details: nil))
+                result(packetTunnelManager?.readSharedDebugLog() ?? "")
             }
         }
     }
@@ -883,34 +1044,56 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
 
         proxyOnlyRunner.stop()
         packetTunnelManager?.remark = remark
-        packetTunnelManager?.xrayConfig = configData
-        packetTunnelManager?.bypassSubnets = arguments["bypass_subnets"] as? [String] ?? []
-        packetTunnelManager?.proxyOnly = false
-        pluginLog.info("startVless remark=\(remark, privacy: .public) configBytes=\(configData.count, privacy: .public) proxyOnly=\(self.packetTunnelManager?.proxyOnly ?? false, privacy: .public) bypassCount=\(self.packetTunnelManager?.bypassSubnets.count ?? 0, privacy: .public)")
+        let bypassSubnets = arguments["bypass_subnets"] as? [String] ?? []
+        pluginDebug("startVless VPN remark=\(remark) configBytes=\(configData.count) currentProxyOnly=\(self.packetTunnelManager?.proxyOnly ?? false) bypassCount=\(self.packetTunnelManager?.bypassSubnets.count ?? 0) hasEventSink=\(eventSink != nil)")
         
         Task {
             do {
+                if self.packetTunnelManager?.isActive == true {
+                    if self.packetTunnelManager?.storedConfigurationMatches(
+                        xrayConfig: configData,
+                        bypassSubnets: bypassSubnets,
+                        proxyOnly: false
+                    ) == true {
+                        pluginDebug("VPN already active with same configuration; skipping preference save/start")
+                        self.startTimer(reason: "vpn-already-active")
+                        result(nil)
+                        return
+                    }
+                    pluginDebug("VPN active with a different configuration; stopping before restart")
+                    self.packetTunnelManager?.stop()
+                    try await self.packetTunnelManager?.waitUntilInactive()
+                }
+
+                self.packetTunnelManager?.xrayConfig = configData
+                self.packetTunnelManager?.bypassSubnets = bypassSubnets
+                self.packetTunnelManager?.proxyOnly = false
                 try await packetTunnelManager?.saveToPreferences()
                 try await packetTunnelManager?.start()
-                pluginLog.info("VPN start requested successfully")
+                pluginDebug("VPN start requested successfully; starting UI/traffic timer")
+                startTimer(reason: "startVless-success")
                 result(nil)
                 return
             } catch {
-                pluginLog.error("Failed to start VPN: \(error.localizedDescription, privacy: .public)")
+                pluginDebug("Failed to start VPN: \(error.localizedDescription)")
                 result(FlutterError(code: "VPN_ERROR",
                                     message: "Failed to start VPN: \(error.localizedDescription)",
                                     details: nil))
-                stopTimer()
+                stopTimer(reason: "startVless-error")
                 return
             }
         }
-        startTimer()
     }
 
     private func requestPermission(result: @escaping FlutterResult) {
         Task {
+            if self.packetTunnelManager?.isActive == true {
+                pluginDebug("requestPermission skipped preference rewrite because VPN is active")
+                result(true)
+                return
+            }
             let isGranted = await packetTunnelManager?.testSaveAndLoadProfile() ?? false
-            pluginLog.info("requestPermission result=\(isGranted, privacy: .public)")
+            pluginDebug("requestPermission result=\(isGranted)")
             result(isGranted)
         }
     }
@@ -930,11 +1113,31 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
             result(FlutterError(code: "INVALID_ARGUMENTS", message: "Invalid arguments for initializeVless.", details: nil))
             return
         }
-        pluginLog.info("initializeVless providerBundleIdentifier=\(providerBundleIdentifier, privacy: .public) groupIdentifier=\(groupIdentifier, privacy: .public)")
+        PluginDebugStore.shared.configure(groupIdentifier: groupIdentifier)
+        pluginDebug("initializeVless providerBundleIdentifier=\(providerBundleIdentifier) groupIdentifier=\(groupIdentifier)")
         self.packetTunnelManager = PacketTunnelManager(providerBundleIdentifier: "\(providerBundleIdentifier).XrayTunnel", groupIdentifier: groupIdentifier)
+        self.packetTunnelManager?.statusDidChange = { [weak self] status in
+            guard let self else { return }
+            pluginDebug("PacketTunnelManager status callback raw=\(status?.rawValue ?? -1) timerRunning=\(self.timer != nil) proxyOnly=\(self.proxyOnlyRunner.isRunning)")
+            switch status {
+            case .connecting, .connected, .reasserting:
+                self.startTimer(reason: "vpn-status-\(status?.rawValue ?? -1)")
+                if status == .connected {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                        self?.logSystemNetworkSnapshot(reason: "vpn-connected-delayed", force: true)
+                    }
+                }
+            case .disconnected, .invalid:
+                if !self.proxyOnlyRunner.isRunning {
+                    self.stopTimer(reason: "vpn-status-\(status?.rawValue ?? -1)")
+                }
+            default:
+                break
+            }
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             if self.packetTunnelManager?.connectedDate != nil{
-                self.startTimer()
+                self.startTimer(reason: "initialize-existing-connected-date")
             }
         }
         result(nil)
@@ -948,6 +1151,7 @@ final class PacketTunnelManager: ObservableObject {
     var xrayConfig: Data = "".data(using: .utf8)!
     var bypassSubnets: [String] = []
     var proxyOnly: Bool = false
+    var statusDidChange: ((NEVPNStatus?) -> Void)?
 
     private var cancellables: Set<AnyCancellable> = []
 
@@ -961,6 +1165,13 @@ final class PacketTunnelManager: ObservableObject {
 
     var connectedDate: Date? {
         manager.flatMap { $0.connection.connectedDate }
+    }
+
+    var isActive: Bool {
+        guard let status else {
+            return false
+        }
+        return status == .connecting || status == .connected || status == .reasserting
     }
 
     init(providerBundleIdentifier: String, groupIdentifier: String) {
@@ -978,14 +1189,19 @@ final class PacketTunnelManager: ObservableObject {
     func reload() async {
         self.cancellables.removeAll()
         self.manager = await self.loadTunnelProviderManager()
-        pluginLog.info("Reloaded tunnel manager: \(self.manager != nil, privacy: .public)")
+        pluginDebug("Reloaded tunnel manager exists=\(self.manager != nil) status=\(self.status?.rawValue ?? -1)")
+        statusDidChange?(self.status)
         NotificationCenter.default
             .publisher(for: .NEVPNConfigurationChange, object: nil)
             .receive(on: DispatchQueue.main)
             .sink { [unowned self] _ in
-                pluginLog.info("NEVPNConfigurationChange received")
+                pluginDebug("NEVPNConfigurationChange received currentStatus=\(self.status?.rawValue ?? -1)")
                 Task(priority: .high) {
                     self.manager = await self.loadTunnelProviderManager()
+                    await MainActor.run {
+                        pluginDebug("NEVPNConfigurationChange reload complete status=\(self.status?.rawValue ?? -1)")
+                        self.statusDidChange?(self.status)
+                    }
                 }
             }
             .store(in: &cancellables)
@@ -993,7 +1209,8 @@ final class PacketTunnelManager: ObservableObject {
             .publisher(for: .NEVPNStatusDidChange)
             .receive(on: DispatchQueue.main)
             .sink { [unowned self] _ in
-                pluginLog.info("NEVPNStatusDidChange status=\(self.status?.rawValue ?? -1, privacy: .public)")
+                pluginDebug("NEVPNStatusDidChange status=\(self.status?.rawValue ?? -1)")
+                self.statusDidChange?(self.status)
                 objectWillChange.send()
             }
             .store(in: &cancellables)
@@ -1015,22 +1232,30 @@ final class PacketTunnelManager: ObservableObject {
                 configuration.providerConfiguration = [
                     "xrayConfig": self.xrayConfig,
                     "bypassSubnets": self.bypassSubnets,
-                    "proxyOnly": self.proxyOnly
+                    "proxyOnly": self.proxyOnly,
+                    "groupIdentifier": self.groupIdentifier ?? ""
                 ]
-                if #available(macOS 11.0, *) {
-                    configuration.excludeLocalNetworks = true
-                } else {
-                    // Fallback
-                }
+                // The packet tunnel installs IPv4/IPv6 default routes, but
+                // macOS may keep ordinary app traffic on the primary interface
+                // unless the profile captures all networks. Do not combine this
+                // with enforceRoutes: that made the provider process lose
+                // reliable access to the excluded Xray server route.
+                configuration.includeAllNetworks = true
+                configuration.excludeLocalNetworks = true
+                configuration.enforceRoutes = false
                 return configuration
             }()
             manager.isEnabled = true
-            pluginLog.info("Saving VPN preferences provider=\(providerBundleIdentifier, privacy: .public) configBytes=\(self.xrayConfig.count, privacy: .public)")
+            if let configuration = manager.protocolConfiguration as? NETunnelProviderProtocol {
+                pluginDebug("Saving VPN preferences provider=\(providerBundleIdentifier) configBytes=\(self.xrayConfig.count) includeAllNetworks=\(configuration.includeAllNetworks) excludeLocalNetworks=\(configuration.excludeLocalNetworks) enforceRoutes=\(configuration.enforceRoutes) hasManager=\(self.manager != nil)")
+            } else {
+                pluginDebug("Saving VPN preferences provider=\(providerBundleIdentifier) configBytes=\(self.xrayConfig.count)")
+            }
             try await manager.saveToPreferences()
             try await manager.loadFromPreferences()
-            pluginLog.info("VPN preferences saved and reloaded")
+            pluginDebug("VPN preferences saved and reloaded status=\(manager.connection.status.rawValue) enabled=\(manager.isEnabled)")
         } catch {
-            pluginLog.error("Error saving VPN preferences: \(error.localizedDescription, privacy: .public)")
+            pluginDebug("Error saving VPN preferences: \(error.localizedDescription)")
             throw error
         }
     }
@@ -1048,17 +1273,22 @@ final class PacketTunnelManager: ObservableObject {
             throw NSError(domain: "VPN", code: 1, userInfo: [NSLocalizedDescriptionKey: "Manager not found"])
         }
 
+        if manager.connection.status == .connected || manager.connection.status == .connecting {
+            pluginDebug("Skipping startVPNTunnel because status=\(manager.connection.status.rawValue)")
+            return
+        }
+
         if !manager.isEnabled {
             manager.isEnabled = true
             try await manager.saveToPreferences()
         }
 
         do {
-            pluginLog.info("Calling startVPNTunnel currentStatus=\(manager.connection.status.rawValue, privacy: .public)")
+            pluginDebug("Calling startVPNTunnel currentStatus=\(manager.connection.status.rawValue) enabled=\(manager.isEnabled)")
             try manager.connection.startVPNTunnel()
-            pluginLog.info("startVPNTunnel returned currentStatus=\(manager.connection.status.rawValue, privacy: .public)")
+            pluginDebug("startVPNTunnel returned currentStatus=\(manager.connection.status.rawValue)")
         } catch {
-            pluginLog.error("Failed to start VPN tunnel: \(error.localizedDescription, privacy: .public)")
+            pluginDebug("Failed to start VPN tunnel: \(error.localizedDescription)")
             throw error
         }
     }
@@ -1067,28 +1297,69 @@ final class PacketTunnelManager: ObservableObject {
         guard let manager = manager else {
             return
         }
-        pluginLog.info("Calling stopVPNTunnel currentStatus=\(manager.connection.status.rawValue, privacy: .public)")
+        pluginDebug("Calling stopVPNTunnel currentStatus=\(manager.connection.status.rawValue)")
         manager.connection.stopVPNTunnel()
+    }
+
+    func waitUntilInactive(timeoutSeconds: TimeInterval = 5) async throws {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while isActive && Date() < deadline {
+            try await Task.sleep(nanoseconds: 150_000_000)
+        }
+    }
+
+    func storedConfigurationMatches(xrayConfig: Data, bypassSubnets: [String], proxyOnly: Bool) -> Bool {
+        guard
+            let configuration = manager?.protocolConfiguration as? NETunnelProviderProtocol,
+            let providerConfiguration = configuration.providerConfiguration
+        else {
+            return false
+        }
+        let storedConfig = providerConfiguration["xrayConfig"] as? Data
+        let storedBypassSubnets = providerConfiguration["bypassSubnets"] as? [String] ?? []
+        let storedProxyOnly = providerConfiguration["proxyOnly"] as? Bool ?? false
+        return storedConfig == xrayConfig &&
+            storedBypassSubnets == bypassSubnets &&
+            storedProxyOnly == proxyOnly
+    }
+
+    func readSharedDebugLog() -> String? {
+        guard let groupIdentifier,
+              !groupIdentifier.isEmpty,
+              let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupIdentifier) else {
+            return nil
+        }
+        let url = containerURL.appendingPathComponent("flutter_vless_tunnel_debug.log")
+        guard let data = try? Data(contentsOf: url),
+              let content = String(data: data, encoding: .utf8),
+              !content.isEmpty else {
+            return nil
+        }
+        return content.split(separator: "\n").suffix(160).joined(separator: "\n")
     }
 
     @discardableResult
     func sendProviderMessage(data: Data) async throws -> Data? {
         guard let manager = manager else {
-            pluginLog.warning("sendProviderMessage skipped: manager is nil")
+            pluginDebug("sendProviderMessage skipped: manager is nil bytes=\(data.count)")
             return nil
         }
 
         guard let session = manager.connection as? NETunnelProviderSession else {
-            pluginLog.error("sendProviderMessage failed: invalid connection type")
+            pluginDebug("sendProviderMessage failed: invalid connection type status=\(manager.connection.status.rawValue) bytes=\(data.count)")
             throw NSError(domain: "VPN", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid connection type"])
         }
 
+        let message = String(data: data, encoding: .utf8) ?? "<\(data.count) bytes>"
+        pluginDebug("sendProviderMessage begin message=\(message) status=\(manager.connection.status.rawValue)")
         return try await withCheckedThrowingContinuation { continuation in
             do {
                 try session.sendProviderMessage(data) { response in
+                    pluginDebug("sendProviderMessage response message=\(message) responseBytes=\(response?.count ?? -1)")
                     continuation.resume(with: .success(response))
                 }
             } catch {
+                pluginDebug("sendProviderMessage throw message=\(message) error=\(error.localizedDescription)")
                 continuation.resume(with: .failure(error))
             }
         }
@@ -1098,10 +1369,10 @@ final class PacketTunnelManager: ObservableObject {
         do {
             try await saveToPreferences()
             let _ = await loadTunnelProviderManager()
-            pluginLog.info("testSaveAndLoadProfile succeeded")
+            pluginDebug("testSaveAndLoadProfile succeeded status=\(self.status?.rawValue ?? -1)")
             return true
         } catch {
-            pluginLog.error("Error during save and load test: \(error.localizedDescription, privacy: .public)")
+            pluginDebug("Error during save and load test: \(error.localizedDescription)")
             return false
         }
     }
@@ -1109,7 +1380,7 @@ final class PacketTunnelManager: ObservableObject {
     private func loadTunnelProviderManager() async -> NETunnelProviderManager? {
         do {
             let managers = try await NETunnelProviderManager.loadAllFromPreferences()
-            pluginLog.info("Loaded \(managers.count, privacy: .public) tunnel manager(s) from preferences")
+            pluginDebug("Loaded \(managers.count) tunnel manager(s) from preferences")
 
             guard let reval = managers.first(where: {
                 guard let configuration = $0.protocolConfiguration as? NETunnelProviderProtocol else {
@@ -1117,15 +1388,15 @@ final class PacketTunnelManager: ObservableObject {
                 }
                 return configuration.providerBundleIdentifier == providerBundleIdentifier
             }) else {
-                pluginLog.warning("No tunnel manager found for provider=\(self.providerBundleIdentifier ?? "nil", privacy: .public)")
+                pluginDebug("No tunnel manager found for provider=\(self.providerBundleIdentifier ?? "nil")")
                 return nil
             }
 
             try await reval.loadFromPreferences()
-            pluginLog.info("Loaded matching tunnel manager enabled=\(reval.isEnabled, privacy: .public) status=\(reval.connection.status.rawValue, privacy: .public)")
+            pluginDebug("Loaded matching tunnel manager enabled=\(reval.isEnabled) status=\(reval.connection.status.rawValue) connectedDate=\(String(describing: reval.connection.connectedDate))")
             return reval
         } catch {
-            pluginLog.error("Error loading tunnel provider manager: \(error.localizedDescription, privacy: .public)")
+            pluginDebug("Error loading tunnel provider manager: \(error.localizedDescription)")
             return nil
         }
     }

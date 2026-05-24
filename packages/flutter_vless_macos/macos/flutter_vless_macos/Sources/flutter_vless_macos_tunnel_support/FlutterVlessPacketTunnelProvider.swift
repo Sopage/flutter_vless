@@ -8,6 +8,8 @@
 import NetworkExtension
 import CXRay
 import Tun2SocksKit
+import Foundation
+import CFNetwork
 import os
 import Darwin
 
@@ -15,7 +17,8 @@ private let tunnelLog = Logger(
     subsystem: Bundle.main.bundleIdentifier ?? "flutter_vless.XrayTunnel",
     category: "PacketTunnel"
 )
-private let tunnelMTU = 1500
+private let tunnelMTU = 1280
+private let hevTCPBufferSize = 4096
 private let dnsServers = ["1.1.1.1", "8.8.8.8"]
 
 /// macOS runs this extension in a separate process from the Flutter app, and the
@@ -26,15 +29,41 @@ private final class TunnelDebugStore {
     static let shared = TunnelDebugStore()
     private let lock = NSLock()
     private var lines: [String] = []
-    private let maxLines = 120
+    private let maxLines = 300
+    private var fileURL: URL?
+
+    func configure(groupIdentifier: String?) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let groupIdentifier,
+              !groupIdentifier.isEmpty,
+              let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupIdentifier) else {
+            fileURL = nil
+            return
+        }
+        fileURL = containerURL.appendingPathComponent("flutter_vless_tunnel_debug.log")
+        let existingLines = lines.joined(separator: "\n")
+        let initialContent = existingLines.isEmpty ? "" : "\(existingLines)\n"
+        try? initialContent.write(to: fileURL!, atomically: true, encoding: .utf8)
+    }
 
     func append(_ message: String) {
         lock.lock()
         defer { lock.unlock() }
         let timestamp = ISO8601DateFormatter().string(from: Date())
-        lines.append("\(timestamp) \(message)")
+        let line = "\(timestamp) \(message)"
+        lines.append(line)
         if lines.count > maxLines {
             lines.removeFirst(lines.count - maxLines)
+        }
+        if let fileURL {
+            if let handle = try? FileHandle(forWritingTo: fileURL) {
+                defer { try? handle.close() }
+                try? handle.seekToEnd()
+                if let data = "\(line)\n".data(using: .utf8) {
+                    try? handle.write(contentsOf: data)
+                }
+            }
         }
     }
 
@@ -55,7 +84,22 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
     private var lastTrafficLogDate: Date = .distantPast
     private var hevLogURL: URL?
 
-    open override func startTunnel(options: [String : NSObject]? = nil) async throws {
+    open override func startTunnel(options: [String : NSObject]?, completionHandler: @escaping (Error?) -> Void) {
+        rememberTunnelLog("Legacy startTunnel entrypoint called")
+        tunnelLog.info("Legacy startTunnel entrypoint called")
+        Task {
+            do {
+                try await startTunnelAsync(options: options)
+                completionHandler(nil)
+            } catch {
+                rememberTunnelLog("startTunnel failed: \(error.localizedDescription)")
+                tunnelLog.error("startTunnel failed: \(error.localizedDescription, privacy: .public)")
+                completionHandler(error)
+            }
+        }
+    }
+
+    private func startTunnelAsync(options: [String : NSObject]?) async throws {
         rememberTunnelLog("Starting Xray packet tunnel")
         tunnelLog.info("Starting Xray packet tunnel options=\(String(describing: options), privacy: .public)")
         guard
@@ -71,6 +115,7 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         tunnelLog.info("Received Xray config bytes=\(xrayConfig.count, privacy: .public)")
         let preparedXrayConfig = prepareXrayConfigForTunnel(xrayConfig) ?? xrayConfig
         let bypassSubnets = providerConfiguration["bypassSubnets"] as? [String] ?? []
+        TunnelDebugStore.shared.configure(groupIdentifier: providerConfiguration["groupIdentifier"] as? String)
         tunnelLog.info("Bypass subnet count=\(bypassSubnets.count, privacy: .public)")
         if (providerConfiguration["proxyOnly"] as? Bool) == true {
             tunnelLog.warning("proxyOnly is not supported by the macOS packet tunnel; starting VPN mode")
@@ -83,6 +128,7 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
 
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "254.1.1.1")
         settings.mtu = NSNumber(value: tunnelMTU)
+        rememberTunnelLog("Configured packet tunnel MTU=\(tunnelMTU)")
         settings.ipv4Settings = {
             let settings = NEIPv4Settings(addresses: ["198.18.0.1"], subnetMasks: ["255.255.0.0"])
             settings.includedRoutes = [NEIPv4Route.default()]
@@ -93,35 +139,47 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
             tunnelLog.info("IPv4 settings address=198.18.0.1/16 includedRoutes=default excludedRoutes=\(settings.excludedRoutes?.count ?? 0, privacy: .public)")
             return settings
         }()
-        // The packet path is currently verified as IPv4-only:
-        // NEPacketTunnel -> HEV tun2socks -> local Xray SOCKS inbound -> VLESS.
-        // Leaving IPv6 enabled made Safari and system services prefer IPv6
-        // destinations that this stack could not prove end-to-end, which looked
-        // like "traffic is moving" while pages stayed stuck. Keep IPv6 disabled
-        // until the provider has a real IPv6 route and health check.
+        // Keep the packet path IPv4-only for now. With IPv6 enabled, macOS can
+        // create IPv4-mapped IPv6 routes such as ::ffff:<xray-server> through
+        // another utun interface, bypassing the explicit IPv4 server exclusion
+        // and starving the Xray outbound connection.
         settings.ipv6Settings = nil
         rememberTunnelLog("IPv6 tunnel routing disabled; using IPv4-only packet tunnel")
         tunnelLog.info("IPv6 tunnel routing disabled; using IPv4-only packet tunnel")
         settings.dnsSettings = {
-            // DNS is owned by NetworkExtension, not by Xray config. The server
-            // IPs are excluded from the default VPN route below, so DNS lookup
-            // cannot recursively depend on the tunnel before Xray is ready.
+            // macOS needs an explicit default resolver while a packet tunnel is
+            // active; otherwise `scutil --dns` can end up with a nameless,
+            // unreachable resolver and browsers stall before opening TCP
+            // sessions. The DNS server host routes are excluded below, so these
+            // resolver packets leave via the primary interface while normal app
+            // traffic still follows the default utun route.
             let settings = NEDNSSettings(servers: dnsServers)
             settings.matchDomains = [""]
             return settings
         }()
-        rememberTunnelLog("DNS through tunnel servers=\(dnsServers.joined(separator: ","))")
+        rememberTunnelLog("System DNS published with route exclusions: \(dnsServers.joined(separator: ","))")
         tunnelLog.info("Applying tunnel network settings")
         try await self.setTunnelNetworkSettings(settings)
         tunnelLog.info("Tunnel network settings applied")
+        if let serverAddress = parsedConfig.serverAddress {
+            let serverRouteResult = serverTCPRouteHealthCheck(
+                host: serverAddress,
+                port: parsedConfig.serverPort ?? 443
+            )
+            rememberTunnelLog("Server TCP route health check: \(serverRouteResult)")
+            tunnelLog.info("Server TCP route health check: \(serverRouteResult, privacy: .public)")
+        }
         try self.startXRay(xrayConfig: preparedXrayConfig)
         logSocksInboundHealthCheck(port: parsedConfig.inboundPort)
         self.startSocks5Tunnel(serverPort: parsedConfig.inboundPort)
-
     }
     open override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
+        rememberTunnelLog("Stopping Xray packet tunnel, reason=\(reason.rawValue)")
         tunnelLog.info("Stopping Xray packet tunnel, reason: \(reason.rawValue, privacy: .public)")
         logTrafficStats(context: "stop")
+        if let hevTail = readHevLogTail(), !hevTail.isEmpty {
+            rememberTunnelLog("--- HEV log tail before stop ---\n\(hevTail)")
+        }
         stopXRay()
         Socks5Tunnel.quit()
 
@@ -194,14 +252,15 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
           udp: 'udp'
         misc:
           task-stack-size: 20480
+          tcp-buffer-size: \(hevTCPBufferSize)
           connect-timeout: 5000
           read-write-timeout: 60000
           log-file: \(logURL.path)
           log-level: debug
           limit-nofile: 65535
         """
-        rememberTunnelLog("Starting HEV socks5 tunnel on 127.0.0.1:\(port), log=\(logURL.path)")
-        tunnelLog.info("Starting HEV socks5 tunnel on 127.0.0.1:\(port, privacy: .public), mtu \(tunnelMTU, privacy: .public)")
+        rememberTunnelLog("Starting HEV socks5 tunnel on 127.0.0.1:\(port), mtu=\(tunnelMTU), tcpBuffer=\(hevTCPBufferSize), log=\(logURL.path)")
+        tunnelLog.info("Starting HEV socks5 tunnel on 127.0.0.1:\(port, privacy: .public), mtu \(tunnelMTU, privacy: .public), tcpBuffer \(hevTCPBufferSize, privacy: .public)")
         DispatchQueue.global(qos: .userInitiated).async {
             tunnelLog.info("HEV socks5 tunnel thread entered")
             let exitCode = Socks5Tunnel.run(withConfig: .string(content: config))
@@ -243,6 +302,7 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
     private struct ParsedConfig {
         let inboundPort: Int
         let serverAddress: String?
+        let serverPort: Int?
     }
 
     private func parseConfig(jsonData: Data) -> ParsedConfig? {
@@ -255,7 +315,11 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         } else {
             tunnelLog.warning("Could not parse outbound server address; VPN routing loop exclusion will be skipped")
         }
-        return ParsedConfig(inboundPort: parsed.inboundPort, serverAddress: parsed.serverAddress)
+        return ParsedConfig(
+            inboundPort: parsed.inboundPort,
+            serverAddress: parsed.serverAddress,
+            serverPort: parsed.serverPort
+        )
     }
 
     /// Normalizes imported Xray JSON for macOS packet-tunnel constraints.
@@ -281,14 +345,16 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
 
     private func buildIPv4ExcludedRoutes(serverAddress: String?, bypassSubnets: [String]) -> [NEIPv4Route] {
         var routes = bypassSubnets.compactMap { ipv4Route(fromCIDR: $0) }
-        // DNS server exclusions keep the resolver reachable while the packet
-        // tunnel is starting. The user-visible symptom without this is usually
-        // a connected VPN with tiny upload counters and no downloaded page data.
-        routes.append(contentsOf: dnsServers.map {
+        // Keep DNS reachable outside the packet tunnel for the current macOS
+        // path. HEV is receiving almost exclusively UDP packets when DNS is
+        // routed through VLESS/XHTTP, so browsers never progress to TCP page
+        // loads. Application traffic still uses the default VPN route.
+        let dnsRoutes = dnsServers.map {
             NEIPv4Route(destinationAddress: $0, subnetMask: "255.255.255.255")
-        })
+        }
+        routes.append(contentsOf: dnsRoutes)
         rememberTunnelLog("Excluded DNS route(s): \(dnsServers.joined(separator: ","))")
-        tunnelLog.info("Excluded \(dnsServers.count, privacy: .public) DNS route(s) from VPN: \(dnsServers.joined(separator: ","), privacy: .public)")
+        tunnelLog.info("Excluded \(dnsRoutes.count, privacy: .public) DNS route(s) from VPN: \(dnsServers.joined(separator: ","), privacy: .public)")
         if let serverAddress {
             let serverAddresses = resolveIPv4Addresses(for: serverAddress)
             let serverRoutes = serverAddresses.map {
@@ -322,6 +388,62 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
             let httpResult = self.socksHTTPHealthCheck(port: port)
             rememberTunnelLog("SOCKS HTTP health check: \(httpResult)")
             tunnelLog.info("SOCKS HTTP health check: \(httpResult, privacy: .public)")
+            let xrayDelayResult = self.xrayInternalDelayHealthCheck(url: "https://google.com/generate_204")
+            rememberTunnelLog("XRay internal delay health check: \(xrayDelayResult)")
+            tunnelLog.info("XRay internal delay health check: \(xrayDelayResult, privacy: .public)")
+            Task {
+                let urlSessionResult = await self.socksURLSessionHealthCheck(
+                    port: port,
+                    url: "https://google.com/generate_204"
+                )
+                rememberTunnelLog("SOCKS URLSession HTTPS health check: \(urlSessionResult)")
+                tunnelLog.info("SOCKS URLSession HTTPS health check: \(urlSessionResult, privacy: .public)")
+            }
+        }
+    }
+
+    private func xrayInternalDelayHealthCheck(url: String) -> String {
+        var error: NSError?
+        var delay: Int64 = -1
+        XRayMeasureDelay(url, &delay, &error)
+        if let error {
+            return "failed delay=\(delay) error=\(error.localizedDescription)"
+        }
+        return "ok delay=\(delay)ms"
+    }
+
+    private func socksURLSessionHealthCheck(port: Int, url: String) async -> String {
+        guard let probeURL = URL(string: url) else {
+            return "invalid url"
+        }
+
+        var request = URLRequest(url: probeURL)
+        request.httpMethod = "GET"
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        request.timeoutInterval = 8
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 8
+        configuration.timeoutIntervalForResource = 8
+        configuration.connectionProxyDictionary = [
+            kCFNetworkProxiesSOCKSEnable as String: true,
+            kCFNetworkProxiesSOCKSProxy as String: "127.0.0.1",
+            kCFNetworkProxiesSOCKSPort as String: port
+        ]
+
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+
+        let start = DispatchTime.now().uptimeNanoseconds
+        do {
+            let (_, response) = try await session.data(for: request)
+            let elapsed = (DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
+            if let httpResponse = response as? HTTPURLResponse {
+                return "ok status=\(httpResponse.statusCode) delay=\(elapsed)ms"
+            }
+            return "ok non-http delay=\(elapsed)ms"
+        } catch {
+            return "failed error=\(error.localizedDescription)"
         }
     }
 
@@ -371,6 +493,43 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         }
 
         return "ok response=\(response.map { String(format: "%02x", $0) }.joined(separator: " "))"
+    }
+
+    private func serverTCPRouteHealthCheck(host: String, port: Int) -> String {
+        let addresses = isIPv4Literal(host) ? [host] : resolveIPv4Addresses(for: host)
+        guard let addressString = addresses.first else {
+            return "resolve \(host) failed"
+        }
+
+        let fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+        guard fd >= 0 else {
+            return "socket failed errno=\(errno)"
+        }
+        defer { close(fd) }
+
+        var timeout = timeval(tv_sec: 5, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = UInt16(port).bigEndian
+        guard inet_pton(AF_INET, addressString, &address.sin_addr) == 1 else {
+            return "inet_pton \(addressString) failed"
+        }
+
+        let start = DispatchTime.now().uptimeNanoseconds
+        let connectResult = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        let elapsed = (DispatchTime.now().uptimeNanoseconds - start) / 1_000_000
+        guard connectResult == 0 else {
+            return "connect \(addressString):\(port) failed errno=\(errno) delay=\(elapsed)ms"
+        }
+        return "ok \(addressString):\(port) delay=\(elapsed)ms"
     }
 
     private func socksConnectHealthCheck(port: Int) -> String {
@@ -452,11 +611,15 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
     /// TCP/Reality returned `HTTP/1.1 204 No Content` on device, while failing
     /// XHTTP links reached earlier stages but did not return usable page bytes.
     private func socksHTTPHealthCheck(port: Int) -> String {
-        let host = "www.gstatic.com"
-        let path = "/generate_204"
-        let hostBytes = Array(host.utf8)
-        guard hostBytes.count <= 255 else {
-            return "host too long"
+        // Use a literal IP here so the health check validates Xray bytes
+        // without depending on the extension process resolver after the system
+        // default route has already moved into the packet tunnel.
+        let targetAddress = "1.1.1.1"
+        let hostHeader = "1.1.1.1"
+        let path = "/cdn-cgi/trace"
+        let targetOctets = targetAddress.split(separator: ".").compactMap { UInt8($0) }
+        guard targetOctets.count == 4 else {
+            return "invalid IPv4 target"
         }
 
         let fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
@@ -492,8 +655,8 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
             return "socks greeting failed errno=\(errno)"
         }
 
-        var request: [UInt8] = [0x05, 0x01, 0x00, 0x03, UInt8(hostBytes.count)]
-        request.append(contentsOf: hostBytes)
+        var request: [UInt8] = [0x05, 0x01, 0x00, 0x01]
+        request.append(contentsOf: targetOctets)
         request.append(0x00)
         request.append(0x50)
         guard sendAll(fd: fd, bytes: request) else {
@@ -524,7 +687,7 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
 
         let httpRequest = """
         GET \(path) HTTP/1.1\r
-        Host: \(host)\r
+        Host: \(hostHeader)\r
         User-Agent: flutter-vless-healthcheck\r
         Connection: close\r
         \r
@@ -533,12 +696,22 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         guard sendAll(fd: fd, bytes: Array(httpRequest.utf8)) else {
             return "send http failed errno=\(errno)"
         }
-        guard let response = recvSome(fd: fd, maxCount: 512), !response.isEmpty else {
-            return "recv http failed errno=\(errno)"
+        switch recvSome(fd: fd, maxCount: 512) {
+        case .success(let response):
+            let text = String(decoding: response, as: UTF8.self)
+            let firstLine = text.components(separatedBy: "\r\n").first ?? text
+            return "ok \(targetAddress)\(path) \(firstLine)"
+        case .closed:
+            return "recv http closed by peer"
+        case .failed(let err):
+            return "recv http failed errno=\(err)"
         }
-        let text = String(decoding: response, as: UTF8.self)
-        let firstLine = text.components(separatedBy: "\r\n").first ?? text
-        return "ok \(host)\(path) \(firstLine)"
+    }
+
+    private enum SocketReadResult {
+        case success([UInt8])
+        case closed
+        case failed(Int32)
     }
 
     private func sendAll(fd: Int32, bytes: [UInt8]) -> Bool {
@@ -572,15 +745,18 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         return result
     }
 
-    private func recvSome(fd: Int32, maxCount: Int) -> [UInt8]? {
+    private func recvSome(fd: Int32, maxCount: Int) -> SocketReadResult {
         var buffer = [UInt8](repeating: 0, count: maxCount)
         let received = buffer.withUnsafeMutableBytes {
             recv(fd, $0.baseAddress, maxCount, 0)
         }
-        guard received > 0 else {
-            return nil
+        if received > 0 {
+            return .success(Array(buffer.prefix(received)))
         }
-        return Array(buffer.prefix(received))
+        if received == 0 {
+            return .closed
+        }
+        return .failed(errno)
     }
 
     private func hex(_ bytes: [UInt8]) -> String {

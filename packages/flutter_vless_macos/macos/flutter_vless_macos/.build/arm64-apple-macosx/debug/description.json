@@ -7,13 +7,27 @@
       "inputs" : [
         {
           "kind" : "file",
-          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/XRay.xcframework/macos-arm64_x86_64/libXRay.a"
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/artifacts/flutter_vless_macos/XRay/XRay.xcframework/macos-arm64_x86_64/libXRay.a"
         }
       ],
       "outputs" : [
         {
           "kind" : "file",
           "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/libXRay.a"
+        }
+      ]
+    },
+    "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/libhev-socks5-tunnel.a" : {
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/artifacts/tun2sockskit/HevSocks5Tunnel/HevSocks5Tunnel.xcframework/macos-arm64_x86_64/libhev-socks5-tunnel.a"
+        }
+      ],
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/libhev-socks5-tunnel.a"
         }
       ]
     }
@@ -30,6 +44,118 @@
 
   ],
   "swiftCommands" : {
+    "C.Tun2SocksKit-arm64-apple-macosx-debug.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Tun2SocksKit.build/sources",
+      "importPath" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/checkouts/Tun2SocksKit/Sources/Tun2SocksKit/Tunnel.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Tun2SocksKitC.build/Tun2SocksKitC.c.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/libhev-socks5-tunnel.a"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Tun2SocksKit.build/sources"
+        }
+      ],
+      "isLibrary" : true,
+      "moduleName" : "Tun2SocksKit",
+      "moduleOutputPath" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Modules/Tun2SocksKit.swiftmodule",
+      "objects" : [
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Tun2SocksKit.build/Tunnel.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx10.13",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-j10",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-I",
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/artifacts/tun2sockskit/HevSocks5Tunnel/HevSocks5Tunnel.xcframework/macos-arm64_x86_64/Headers",
+        "-Xcc",
+        "-I",
+        "-Xcc",
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/artifacts/tun2sockskit/HevSocks5Tunnel/HevSocks5Tunnel.xcframework/macos-arm64_x86_64/Headers",
+        "-Xcc",
+        "-fmodule-map-file=/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Tun2SocksKitC.build/module.modulemap",
+        "-Xcc",
+        "-I",
+        "-Xcc",
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/checkouts/Tun2SocksKit/Sources/Tun2SocksKitC",
+        "-module-cache-path",
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-parse-as-library",
+        "-F",
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug",
+        "-emit-objc-header",
+        "-emit-objc-header-path",
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Tun2SocksKit.build/include/Tun2SocksKit-Swift.h",
+        "-swift-version",
+        "5",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-suppress-warnings"
+      ],
+      "outputFileMapPath" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Tun2SocksKit.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Tun2SocksKit.build/Tunnel.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Modules/Tun2SocksKit.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/checkouts/Tun2SocksKit/Sources/Tun2SocksKit/Tunnel.swift"
+      ],
+      "tempsPath" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Tun2SocksKit.build",
+      "wholeModuleOptimization" : false
+    },
     "C.flutter_vless_macos-arm64-apple-macosx-debug.module" : {
       "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
       "fileList" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/flutter_vless_macos.build/sources",
@@ -42,6 +168,10 @@
         {
           "kind" : "file",
           "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/CXRay.build/shim.c.o"
         },
         {
           "kind" : "file",
@@ -60,7 +190,7 @@
       ],
       "otherArguments" : [
         "-target",
-        "arm64-apple-macosx12.0",
+        "arm64-apple-macosx13.0",
         "-incremental",
         "-enable-batch-mode",
         "-serialize-diagnostics",
@@ -73,11 +203,17 @@
         "-DDEBUG",
         "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
         "-I",
-        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/XRay.xcframework/macos-arm64_x86_64/Headers",
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/artifacts/flutter_vless_macos/XRay/XRay.xcframework/macos-arm64_x86_64/Headers",
         "-Xcc",
         "-I",
         "-Xcc",
-        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/XRay.xcframework/macos-arm64_x86_64/Headers",
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/artifacts/flutter_vless_macos/XRay/XRay.xcframework/macos-arm64_x86_64/Headers",
+        "-Xcc",
+        "-fmodule-map-file=/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/Sources/CXRay/include/module.modulemap",
+        "-Xcc",
+        "-I",
+        "-Xcc",
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/Sources/CXRay/include",
         "-module-cache-path",
         "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/ModuleCache",
         "-parseable-output",
@@ -132,24 +268,169 @@
       ],
       "tempsPath" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/flutter_vless_macos.build",
       "wholeModuleOptimization" : false
+    },
+    "C.flutter_vless_macos_tunnel_support-arm64-apple-macosx-debug.module" : {
+      "executable" : "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "fileList" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/flutter_vless_macos_tunnel_support.build/sources",
+      "importPath" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/Sources/flutter_vless_macos_tunnel_support/FlutterVlessPacketTunnelProvider.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/Sources/flutter_vless_macos_tunnel_support/TunnelXrayConfigPreparer.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/CXRay.build/shim.c.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Modules/Tun2SocksKit.swiftmodule"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Tun2SocksKitC.build/Tun2SocksKitC.c.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/libhev-socks5-tunnel.a"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/libXRay.a"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/flutter_vless_macos_tunnel_support.build/sources"
+        }
+      ],
+      "isLibrary" : true,
+      "moduleName" : "flutter_vless_macos_tunnel_support",
+      "moduleOutputPath" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Modules/flutter_vless_macos_tunnel_support.swiftmodule",
+      "objects" : [
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/flutter_vless_macos_tunnel_support.build/FlutterVlessPacketTunnelProvider.swift.o",
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/flutter_vless_macos_tunnel_support.build/TunnelXrayConfigPreparer.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx13.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-j10",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-I",
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/artifacts/flutter_vless_macos/XRay/XRay.xcframework/macos-arm64_x86_64/Headers",
+        "-Xcc",
+        "-I",
+        "-Xcc",
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/artifacts/flutter_vless_macos/XRay/XRay.xcframework/macos-arm64_x86_64/Headers",
+        "-Xcc",
+        "-fmodule-map-file=/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/Sources/CXRay/include/module.modulemap",
+        "-Xcc",
+        "-I",
+        "-Xcc",
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/Sources/CXRay/include",
+        "-Xcc",
+        "-fmodule-map-file=/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Tun2SocksKitC.build/module.modulemap",
+        "-Xcc",
+        "-I",
+        "-Xcc",
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/checkouts/Tun2SocksKit/Sources/Tun2SocksKitC",
+        "-I",
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/artifacts/tun2sockskit/HevSocks5Tunnel/HevSocks5Tunnel.xcframework/macos-arm64_x86_64/Headers",
+        "-Xcc",
+        "-I",
+        "-Xcc",
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/artifacts/tun2sockskit/HevSocks5Tunnel/HevSocks5Tunnel.xcframework/macos-arm64_x86_64/Headers",
+        "-module-cache-path",
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-parse-as-library",
+        "-F",
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug",
+        "-emit-objc-header",
+        "-emit-objc-header-path",
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/flutter_vless_macos_tunnel_support.build/include/flutter_vless_macos_tunnel_support-Swift.h",
+        "-swift-version",
+        "5",
+        "-plugin-path",
+        "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+        "-F",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-I",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-L",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+        "-Xcc",
+        "-F",
+        "-Xcc",
+        "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "flutter_vless_macos"
+      ],
+      "outputFileMapPath" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/flutter_vless_macos_tunnel_support.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/flutter_vless_macos_tunnel_support.build/FlutterVlessPacketTunnelProvider.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/flutter_vless_macos_tunnel_support.build/TunnelXrayConfigPreparer.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Modules/flutter_vless_macos_tunnel_support.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/Sources/flutter_vless_macos_tunnel_support/FlutterVlessPacketTunnelProvider.swift",
+        "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/Sources/flutter_vless_macos_tunnel_support/TunnelXrayConfigPreparer.swift"
+      ],
+      "tempsPath" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/flutter_vless_macos_tunnel_support.build",
+      "wholeModuleOptimization" : false
     }
   },
   "swiftFrontendCommands" : {
 
   },
   "swiftTargetScanArgs" : {
-    "flutter_vless_macos" : [
+    "Tun2SocksKit" : [
       "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
       "-module-name",
-      "flutter_vless_macos",
-      "-package-name",
-      "flutter_vless_macos",
+      "Tun2SocksKit",
       "-c",
-      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/Sources/flutter_vless_macos/FlutterVlessPlugin.swift",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/checkouts/Tun2SocksKit/Sources/Tun2SocksKit/Tunnel.swift",
       "-I",
       "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Modules",
       "-target",
-      "arm64-apple-macosx12.0",
+      "arm64-apple-macosx10.13",
       "-incremental",
       "-enable-batch-mode",
       "-serialize-diagnostics",
@@ -162,11 +443,90 @@
       "-DDEBUG",
       "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
       "-I",
-      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/XRay.xcframework/macos-arm64_x86_64/Headers",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/artifacts/tun2sockskit/HevSocks5Tunnel/HevSocks5Tunnel.xcframework/macos-arm64_x86_64/Headers",
       "-Xcc",
       "-I",
       "-Xcc",
-      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/XRay.xcframework/macos-arm64_x86_64/Headers",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/artifacts/tun2sockskit/HevSocks5Tunnel/HevSocks5Tunnel.xcframework/macos-arm64_x86_64/Headers",
+      "-Xcc",
+      "-fmodule-map-file=/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Tun2SocksKitC.build/module.modulemap",
+      "-Xcc",
+      "-I",
+      "-Xcc",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/checkouts/Tun2SocksKit/Sources/Tun2SocksKitC",
+      "-module-cache-path",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-parse-as-library",
+      "-F",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug",
+      "-emit-objc-header",
+      "-emit-objc-header-path",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Tun2SocksKit.build/include/Tun2SocksKit-Swift.h",
+      "-swift-version",
+      "5",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-suppress-warnings",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ],
+    "flutter_vless_macos" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "flutter_vless_macos",
+      "-package-name",
+      "flutter_vless_macos",
+      "-c",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/Sources/flutter_vless_macos/FlutterVlessPlugin.swift",
+      "-I",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx13.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-j10",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-I",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/artifacts/flutter_vless_macos/XRay/XRay.xcframework/macos-arm64_x86_64/Headers",
+      "-Xcc",
+      "-I",
+      "-Xcc",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/artifacts/flutter_vless_macos/XRay/XRay.xcframework/macos-arm64_x86_64/Headers",
+      "-Xcc",
+      "-fmodule-map-file=/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/Sources/CXRay/include/module.modulemap",
+      "-Xcc",
+      "-I",
+      "-Xcc",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/Sources/CXRay/include",
       "-module-cache-path",
       "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/ModuleCache",
       "-parseable-output",
@@ -205,10 +565,115 @@
       "flutter_vless_macos",
       "-driver-use-frontend-path",
       "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
+    ],
+    "flutter_vless_macos_tunnel_support" : [
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc",
+      "-module-name",
+      "flutter_vless_macos_tunnel_support",
+      "-package-name",
+      "flutter_vless_macos",
+      "-c",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/Sources/flutter_vless_macos_tunnel_support/FlutterVlessPacketTunnelProvider.swift",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/Sources/flutter_vless_macos_tunnel_support/TunnelXrayConfigPreparer.swift",
+      "-I",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx13.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-j10",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-I",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/artifacts/flutter_vless_macos/XRay/XRay.xcframework/macos-arm64_x86_64/Headers",
+      "-Xcc",
+      "-I",
+      "-Xcc",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/artifacts/flutter_vless_macos/XRay/XRay.xcframework/macos-arm64_x86_64/Headers",
+      "-Xcc",
+      "-fmodule-map-file=/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/Sources/CXRay/include/module.modulemap",
+      "-Xcc",
+      "-I",
+      "-Xcc",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/Sources/CXRay/include",
+      "-Xcc",
+      "-fmodule-map-file=/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Tun2SocksKitC.build/module.modulemap",
+      "-Xcc",
+      "-I",
+      "-Xcc",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/checkouts/Tun2SocksKit/Sources/Tun2SocksKitC",
+      "-I",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/artifacts/tun2sockskit/HevSocks5Tunnel/HevSocks5Tunnel.xcframework/macos-arm64_x86_64/Headers",
+      "-Xcc",
+      "-I",
+      "-Xcc",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/artifacts/tun2sockskit/HevSocks5Tunnel/HevSocks5Tunnel.xcframework/macos-arm64_x86_64/Headers",
+      "-module-cache-path",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-parse-as-library",
+      "-F",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug",
+      "-emit-objc-header",
+      "-emit-objc-header-path",
+      "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/flutter_vless_macos_tunnel_support.build/include/flutter_vless_macos_tunnel_support-Swift.h",
+      "-swift-version",
+      "5",
+      "-plugin-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+      "-F",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-I",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-L",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/usr/lib",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.5.sdk",
+      "-Xcc",
+      "-F",
+      "-Xcc",
+      "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/Library/Frameworks",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "flutter_vless_macos",
+      "-driver-use-frontend-path",
+      "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin/swiftc"
     ]
   },
   "targetDependencyMap" : {
+    "CXRay" : [
+      "XRay"
+    ],
+    "Tun2SocksKit" : [
+      "Tun2SocksKitC",
+      "HevSocks5Tunnel"
+    ],
+    "Tun2SocksKitC" : [
+
+    ],
     "flutter_vless_macos" : [
+      "CXRay",
+      "XRay"
+    ],
+    "flutter_vless_macos_tunnel_support" : [
+      "Tun2SocksKit",
+      "Tun2SocksKitC",
+      "HevSocks5Tunnel",
+      "CXRay",
       "XRay"
     ]
   },
@@ -224,6 +689,20 @@
     }
   },
   "writeCommands" : {
+    "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Tun2SocksKit.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/checkouts/Tun2SocksKit/Sources/Tun2SocksKit/Tunnel.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/Tun2SocksKit.build/sources"
+    },
     "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/flutter_vless_macos.build/sources" : {
       "alwaysOutOfDate" : false,
       "inputs" : [
@@ -237,6 +716,24 @@
         }
       ],
       "outputFilePath" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/flutter_vless_macos.build/sources"
+    },
+    "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/flutter_vless_macos_tunnel_support.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/Sources/flutter_vless_macos_tunnel_support/FlutterVlessPacketTunnelProvider.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/Sources/flutter_vless_macos_tunnel_support/TunnelXrayConfigPreparer.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/flutter_vless_macos_tunnel_support.build/sources"
     },
     "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/swift-version--58304C5D6DBC2206.txt" : {
       "alwaysOutOfDate" : true,

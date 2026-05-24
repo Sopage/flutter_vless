@@ -1,0 +1,3 @@
+module flutter_vless_macos_tunnel_support {
+    header "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/arm64-apple-macosx/debug/flutter_vless_macos_tunnel_support.build/include/flutter_vless_macos_tunnel_support-Swift.h"
+}
