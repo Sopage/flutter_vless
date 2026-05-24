@@ -4,5 +4,13 @@
 <dict>
 	<key>com.apple.security.app-sandbox</key>
 	<false/>
+	<key>com.apple.developer.networking.networkextension</key>
+	<array>
+		<string>packet-tunnel-provider</string>
+	</array>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.dev.tfox.flutterXray</string>
+	</array>
 </dict>
 </plist>

@@ -5,9 +5,15 @@ XRAY_MOBILE_REPO="${XRAY_MOBILE_REPO:-https://github.com/EbrahimTahernejad/xray-
 XRAY_MOBILE_REF="${XRAY_MOBILE_REF:-1.8.1}"
 XRAY_CORE_VERSION="${XRAY_CORE_VERSION:-v26.5.9}"
 XRAY_CORE_REF="${XRAY_CORE_REF:-1bdb488c9ec09ea51e6899697d5b7437f3cf6eb2}"
+XRAY_MACOS_DEPLOYMENT_TARGET="${XRAY_MACOS_DEPLOYMENT_TARGET:-13.0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${BUILD_DIR:-$SCRIPT_DIR/build_xray_macos}"
 OUTPUT_XCFRAMEWORK="${OUTPUT_XCFRAMEWORK:-$SCRIPT_DIR/XRay.xcframework}"
+
+export MACOSX_DEPLOYMENT_TARGET="$XRAY_MACOS_DEPLOYMENT_TARGET"
+export CGO_CFLAGS="${CGO_CFLAGS:-} -mmacosx-version-min=$XRAY_MACOS_DEPLOYMENT_TARGET"
+export CGO_CXXFLAGS="${CGO_CXXFLAGS:-} -mmacosx-version-min=$XRAY_MACOS_DEPLOYMENT_TARGET"
+export CGO_LDFLAGS="${CGO_LDFLAGS:-} -mmacosx-version-min=$XRAY_MACOS_DEPLOYMENT_TARGET"
 
 if ! command -v go >/dev/null 2>&1; then
     echo "Error: Go is required."

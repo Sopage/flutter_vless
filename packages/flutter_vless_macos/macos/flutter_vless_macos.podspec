@@ -12,8 +12,8 @@ macOS implementation of the flutter_vless plugin.
   s.source = { :path => '..' }
   s.source_files = 'flutter_vless_macos/Sources/flutter_vless_macos/**/*.swift'
   s.dependency 'FlutterMacOS'
-  s.platform = :osx, '12.0'
-  s.osx.deployment_target = '12.0'
+  s.platform = :osx, '13.0'
+  s.osx.deployment_target = '13.0'
 
   s.prepare_command = <<-CMD
     set -e

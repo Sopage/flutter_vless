@@ -195,7 +195,17 @@ See [IOS_SETUP.md](./IOS_SETUP.md) for detailed iOS setup instructions.
 ### macOS
 
 See [MACOS_SETUP.md](./MACOS_SETUP.md) for detailed macOS setup instructions.
-For detailed Xray setup, see [MACOS_XRAY_SETUP.md](./MACOS_XRAY_SETUP.md)
+
+Quick setup:
+
+```bash
+dart run flutter_vless:setup_macos_vpn \
+  --bundle-id com.example.myapp \
+  --group-id group.com.example.myapp \
+  --team-id ABCDE12345
+```
+
+macOS VPN mode requires a macOS 13.0 deployment target or newer.
 
 ### Windows
 
