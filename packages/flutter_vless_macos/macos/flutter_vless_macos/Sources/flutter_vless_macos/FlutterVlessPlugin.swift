@@ -12,11 +12,40 @@ import os
 import CFNetwork
 import Darwin
 
+// MARK: - macOS App-Side Maintenance Notes
+//
+// This file runs in the Flutter Runner process, not in the Network Extension.
+// It owns the MethodChannel/EventChannel API, proxy-only Xray lifecycle,
+// NETunnelProviderManager persistence, status timers, and diagnostics that make
+// Packet Tunnel regressions visible from the app console.
+//
+// There are two distinct macOS networking modes:
+//
+// - Proxy-only mode:
+//   Runs Xray in the app process and configures macOS system proxy settings
+//   with `networksetup`. It is useful and fast, but it cannot capture UDP/QUIC
+//   and cannot force apps that ignore system proxy settings.
+//
+// - Packet Tunnel mode:
+//   Starts `XrayTunnel.appex`, installs utun routes, and lets the extension run
+//   Xray plus HEV tun2socks. This is the full VPN path and has its own DNS and
+//   route invariants documented in `doc/macos_packet_tunnel_architecture.md`.
+//
+// Keep these modes separate. A passing proxy-only delay probe proves the config
+// can work through a local proxy; it does not prove the Network Extension,
+// utun, DNS resolver, server host-route exclusion, or HEV path.
+
 private let pluginLog = Logger(
     subsystem: Bundle.main.bundleIdentifier ?? "flutter_vless.Runner",
     category: "FlutterVlessPlugin"
 )
 
+/// App-process debug file writer.
+///
+/// Provider logs live in the extension process, so the app keeps its own debug
+/// trail in the same App Group container. The two files together let us compare
+/// app-side manager events with provider-side tunnel startup evidence after a
+/// real-device run.
 private final class PluginDebugStore {
     static let shared = PluginDebugStore()
 
@@ -69,6 +98,17 @@ private func pluginDebug(_ message: String) {
     pluginLog.info("\(message, privacy: .public)")
 }
 
+/// Captures the system routing and resolver state from the app process.
+///
+/// The Packet Tunnel provider can prove Xray/HEV health, but the app process is
+/// the most convenient place to run macOS CLI diagnostics such as `route get`,
+/// `netstat`, and `scutil --dns`. These snapshots are intentionally verbose
+/// because the final bug was only obvious when comparing:
+///
+/// - default route before and after `NEVPNStatus.connected`,
+/// - DNS host routes (`1.1.1.1`, `8.8.8.8`) versus resolver ownership,
+/// - server host route outside utun,
+/// - empty/unreachable DNS resolver states.
 private struct SystemNetworkDiagnostics {
     static func logSnapshot(reason: String) {
         DispatchQueue.global(qos: .utility).async {
@@ -109,6 +149,13 @@ private struct SystemNetworkDiagnostics {
 }
 
 // MARK: - System Proxy Helper (macOS only)
+/// Wrapper around macOS `networksetup` for proxy-only mode.
+///
+/// This helper must never be used as a substitute for Packet Tunnel routing.
+/// macOS system proxy settings affect cooperative TCP clients only. They do not
+/// capture UDP/QUIC and do not guarantee that all apps use the proxy. Packet
+/// Tunnel mode clears system proxies before startup so the two modes do not
+/// mask each other's behavior during debugging.
 private struct SystemProxyHelper {
     static func getNetworkServices() -> [String] {
         let task = Process()
@@ -159,6 +206,12 @@ private struct SystemProxyHelper {
         return (httpPort, socksPort)
     }
 
+    /// Extracts outbound addresses so proxy-only mode can bypass the proxy
+    /// server itself.
+    ///
+    /// Without this bypass, a system proxy configuration can accidentally make
+    /// Xray's own outbound connection try to reach the server through the local
+    /// proxy it is currently providing.
     static func parseOutboundAddresses(config: String) -> [String] {
         var addresses: [String] = []
         guard let data = config.data(using: .utf8),
@@ -215,6 +268,11 @@ private struct SystemProxyHelper {
         return addresses
     }
 
+    /// Resolves domains for proxy bypass lists.
+    ///
+    /// The original domain is kept in the returned list as a fallback because
+    /// `networksetup -setproxybypassdomains` accepts both hostnames and IPs, and
+    /// DNS can change between setup time and connection time.
     static func resolveDomainToIPs(_ domain: String) -> [String] {
         var hints = addrinfo()
         hints.ai_family = AF_UNSPEC
@@ -321,6 +379,11 @@ private struct SystemProxyHelper {
 
 // MARK: - Core Classes
 
+/// Xray logger used by app-process delay/proxy-only runs.
+///
+/// The Packet Tunnel provider has its own logger and debug store. Keeping the
+/// loggers separate makes it clear whether a message came from the app process
+/// or the extension process.
 private final class PluginXRayLogger: NSObject, XRayLoggerProtocol {
     func logInput(_ s: String?) {
         if let message = s {
@@ -329,6 +392,12 @@ private final class PluginXRayLogger: NSObject, XRayLoggerProtocol {
     }
 }
 
+/// One-shot app-process Xray runner used for server delay probes.
+///
+/// This is intentionally not the VPN implementation. It starts a temporary
+/// local HTTP proxy, measures a URL through that proxy, and stops Xray. A pass
+/// here is a config/server signal only; it says nothing about Packet Tunnel
+/// routes or DNS.
 private actor ServerDelayRunner {
     private let logger = PluginXRayLogger()
 
@@ -361,6 +430,11 @@ private actor ServerDelayRunner {
         }
     }
 
+    /// Builds a temporary HTTP-proxy config for delay measurement.
+    ///
+    /// We rewrite only the local inbound used by the probe. Outbound protocol
+    /// details are preserved so the delay test exercises the same server and
+    /// credentials as the real start request.
     private static func buildDelayConfigData(config: String, proxyPort: Int) throws -> Data {
         guard
             let data = config.data(using: .utf8),
@@ -484,6 +558,18 @@ private actor ServerDelayRunner {
     }
 }
 
+/// App-process proxy-only runtime.
+///
+/// Proxy-only is valuable for fast local checks and for users who explicitly
+/// want system proxy behavior, but it has known limits:
+///
+/// - it cannot capture UDP/QUIC;
+/// - browsers may bypass it for HTTP/3 unless QUIC is disabled or blocked;
+/// - stale proxy settings can break all network access if not cleaned up.
+///
+/// For that reason cleanup happens on normal stop, app termination, and signal
+/// handlers. Packet Tunnel mode always stops proxy-only mode before saving or
+/// starting the VPN profile.
 private final class ProxyOnlyRunner {
     private let logger = PluginXRayLogger()
     private(set) var isRunning = false
@@ -579,6 +665,15 @@ private final class ProxyOnlyRunner {
         return (up, down)
     }
 
+    /// Normalizes a config for app-process proxy-only mode.
+    ///
+    /// This is separate from `TunnelXrayConfigPreparer` because proxy-only has
+    /// different constraints:
+    ///
+    /// - it needs an HTTP inbound for macOS system web/secure-web proxy fields;
+    /// - it should keep a SOCKS inbound for apps that support SOCKS;
+    /// - it injects Xray stats API plumbing for local traffic counters;
+    /// - it does not install utun routes or NetworkExtension DNS settings.
     private static func buildProxyOnlyConfigData(configData: Data) throws -> Data {
         guard var json = try JSONSerialization.jsonObject(with: configData, options: []) as? [String: Any] else {
             throw NSError(domain: "FlutterVless", code: 11, userInfo: [NSLocalizedDescriptionKey: "Invalid XRay config JSON"])
@@ -708,6 +803,20 @@ private final class ProxyOnlyRunner {
     }
 }
 
+/// Flutter-facing macOS plugin implementation.
+///
+/// Responsibilities:
+///
+/// - MethodChannel dispatch for initialize/start/stop/delay/debug calls.
+/// - EventChannel status stream for UI duration/speed/counter updates.
+/// - App-process proxy-only lifecycle.
+/// - Packet Tunnel profile management through `PacketTunnelManager`.
+/// - Repeated provider/debug polling while the VPN is active.
+///
+/// The status stream is intentionally optimistic when `startVPNTunnel` returns:
+/// the UI can show "connecting/connected" quickly, but the provider debug
+/// snapshot remains the source of truth for whether DNS, server routes, Xray,
+/// HEV, and real HTTPS all worked.
 public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
 
     private var packetTunnelManager: PacketTunnelManager? = nil
@@ -784,6 +893,17 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         return nil
     }
 
+    /// Starts the shared UI/status polling timer.
+    ///
+    /// The same timer supports proxy-only and Packet Tunnel mode, but it reads
+    /// counters differently:
+    ///
+    /// - proxy-only uses Xray stats from the app-process core;
+    /// - VPN mode asks the provider for HEV byte counters via `xray_traffic`.
+    ///
+    /// The timer also periodically asks for `xray_debug`, which is why final
+    /// user logs contain both app-side route snapshots and provider-side golden
+    /// health checks.
     private func startTimer(reason: String = "unspecified") {
         guard Thread.isMainThread else {
             pluginDebug("startTimer requested off main thread reason=\(reason); dispatching to main")
@@ -863,6 +983,11 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         RunLoop.main.add(timer, forMode: .common)
     }
 
+    /// Stops status polling and resets counters.
+    ///
+    /// Resetting `lastProviderDebugLogDate` and `lastNetworkSnapshotLogDate`
+    /// matters for repeated manual test runs: after a stop/start cycle we want
+    /// the first new run to emit fresh diagnostics immediately.
     private func stopTimer(reason: String = "unspecified") {
         guard Thread.isMainThread else {
             pluginDebug("stopTimer requested off main thread reason=\(reason); dispatching to main")
@@ -907,6 +1032,12 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         SystemNetworkDiagnostics.logSnapshot(reason: reason)
     }
 
+    /// Requests provider-side debug evidence.
+    ///
+    /// Primary path is `sendProviderMessage("xray_debug")`. The shared App
+    /// Group file is the fallback because NetworkExtension sessions can return
+    /// nil during startup/shutdown even when the provider already wrote useful
+    /// data.
     private func logProviderDebugSnapshot() {
         guard Date().timeIntervalSince(lastProviderDebugLogDate) >= 5 else {
             return
@@ -959,6 +1090,11 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         }
     }
 
+    /// Stops both macOS modes.
+    ///
+    /// Calling both cleanup paths is deliberate. It is safe when one mode is not
+    /// running and prevents stale system proxy settings from surviving a switch
+    /// between proxy-only and VPN mode.
     private func stopVless(result: FlutterResult) {
         pluginLog.info("stopVless requested")
         proxyOnlyRunner.stop()
@@ -1018,6 +1154,13 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         }
     }
 
+    /// Starts either proxy-only mode or Packet Tunnel VPN mode.
+    ///
+    /// For VPN mode, the config is stored in `NETunnelProviderProtocol` so the
+    /// extension can read it at startup. If a VPN is already active with the same
+    /// config, the method avoids unnecessary profile rewrites because rewriting
+    /// preferences while NetworkExtension is active can emit extra configuration
+    /// changes and transient status noise.
     private func startVless(call: FlutterMethodCall, result: @escaping FlutterResult) {
         guard let arguments = call.arguments as? [String: Any],
               let remark = arguments["remark"] as? String,
@@ -1085,6 +1228,12 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         }
     }
 
+    /// Creates/saves/loads the VPN profile to trigger macOS permission flow.
+    ///
+    /// This intentionally skips preference rewrites while the VPN is active.
+    /// Re-saving an active tunnel profile can cause configuration-change storms
+    /// and, on some machines, makes the system briefly lose the manager we are
+    /// observing.
     private func requestPermission(result: @escaping FlutterResult) {
         Task {
             if self.packetTunnelManager?.isActive == true {
@@ -1106,6 +1255,12 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         }
     }
 
+    /// Initializes the app-side Packet Tunnel manager.
+    ///
+    /// Dart passes the base app bundle id. The plugin appends `.XrayTunnel`
+    /// because the generated macOS extension target always uses that suffix.
+    /// Passing the extension id from Dart would produce
+    /// `<base>.XrayTunnel.XrayTunnel` and the manager lookup would fail.
     private func initializeVless(call: FlutterMethodCall, result: @escaping FlutterResult) {
         guard let arguments = call.arguments as? [String: Any],
               let providerBundleIdentifier = arguments["providerBundleIdentifier"] as? String,
@@ -1144,6 +1299,19 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     }
 }
 
+/// Thin wrapper around `NETunnelProviderManager`.
+///
+/// This class centralizes the macOS profile lifecycle:
+///
+/// - load the existing tunnel manager from preferences;
+/// - save Xray config bytes and route options into providerConfiguration;
+/// - start/stop `NETunnelProviderSession`;
+/// - forward status/configuration notifications back to the plugin;
+/// - bridge provider messages for traffic and debug snapshots.
+///
+/// NetworkExtension preferences are eventually consistent and noisy. The code
+/// therefore reloads on `NEVPNConfigurationChange`, listens to
+/// `NEVPNStatusDidChange`, and logs every status transition with raw values.
 final class PacketTunnelManager: ObservableObject {
     var providerBundleIdentifier: String?
     var groupIdentifier: String?
@@ -1216,6 +1384,19 @@ final class PacketTunnelManager: ObservableObject {
             .store(in: &cancellables)
     }
 
+    /// Saves the Packet Tunnel profile with the current runtime config.
+    ///
+    /// `providerConfiguration` is the only structured handoff from the app
+    /// process to the extension at startup. Keep values small and serializable:
+    /// raw Xray config bytes, bypass subnets, proxy-only flag for diagnostics,
+    /// and App Group id for shared debug logs.
+    ///
+    /// Route flags are deliberate:
+    ///
+    /// - `includeAllNetworks = true`: macOS should capture normal app traffic.
+    /// - `excludeLocalNetworks = true`: local network/LAN behavior remains sane.
+    /// - `enforceRoutes = false`: forcing routes made the provider's own access
+    ///   to excluded DNS/server routes less reliable during bring-up.
     func saveToPreferences() async throws {
         guard let providerBundleIdentifier = providerBundleIdentifier else {
             throw NSError(domain: "VPN", code: 1, userInfo: [NSLocalizedDescriptionKey: "Provider bundle identifier is missing."])
@@ -1268,6 +1449,11 @@ final class PacketTunnelManager: ObservableObject {
         try await manager.removeFromPreferences()
     }
 
+    /// Starts the saved VPN profile.
+    ///
+    /// `startVPNTunnel` returning successfully does not mean provider health is
+    /// complete. It means macOS accepted the start request. The plugin starts UI
+    /// polling after this, while provider health checks prove the real data path.
     func start() async throws {
         guard let manager = manager else {
             throw NSError(domain: "VPN", code: 1, userInfo: [NSLocalizedDescriptionKey: "Manager not found"])
@@ -1308,6 +1494,10 @@ final class PacketTunnelManager: ObservableObject {
         }
     }
 
+    /// Avoids restarting an already-active VPN with identical provider config.
+    ///
+    /// This reduces preference churn and repeated configuration notifications
+    /// during manual testing from the example app.
     func storedConfigurationMatches(xrayConfig: Data, bypassSubnets: [String], proxyOnly: Bool) -> Bool {
         guard
             let configuration = manager?.protocolConfiguration as? NETunnelProviderProtocol,
@@ -1323,6 +1513,10 @@ final class PacketTunnelManager: ObservableObject {
             storedProxyOnly == proxyOnly
     }
 
+    /// Fallback reader for provider debug evidence.
+    ///
+    /// Used when `sendProviderMessage("xray_debug")` returns nil or throws
+    /// during extension startup/shutdown.
     func readSharedDebugLog() -> String? {
         guard let groupIdentifier,
               !groupIdentifier.isEmpty,
@@ -1338,6 +1532,11 @@ final class PacketTunnelManager: ObservableObject {
         return content.split(separator: "\n").suffix(160).joined(separator: "\n")
     }
 
+    /// Sends an internal control/debug message to the Packet Tunnel provider.
+    ///
+    /// Do not use this for high-frequency data transfer. It is for status,
+    /// counters, health evidence, and connected delay probes. The actual VPN
+    /// traffic flows through utun/HEV/Xray, not provider messages.
     @discardableResult
     func sendProviderMessage(data: Data) async throws -> Data? {
         guard let manager = manager else {

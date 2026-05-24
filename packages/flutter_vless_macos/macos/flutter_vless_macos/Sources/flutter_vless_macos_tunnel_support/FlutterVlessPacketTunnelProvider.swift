@@ -13,18 +13,91 @@ import CFNetwork
 import os
 import Darwin
 
+// MARK: - macOS Packet Tunnel Maintenance Notes
+//
+// This file is the Network Extension side of macOS VPN mode. It does not run in
+// the Flutter app process. It runs inside the `XrayTunnel.appex` sandbox, owns
+// the utun interface, starts Xray in-process, and starts HEV tun2socks to bridge
+// packets from NetworkExtension into Xray's local SOCKS inbound.
+//
+// The working packet path is:
+//
+//   macOS apps
+//     -> NetworkExtension Packet Tunnel utun
+//     -> HEV socks5 tunnel / tun2socks
+//     -> local Xray SOCKS inbound on 127.0.0.1
+//     -> Xray proxy outbound
+//     -> remote VLESS server
+//
+// Important lessons from the macOS bring-up:
+//
+// 1. `NEVPNStatus.connected` is not enough. macOS can report a connected tunnel
+//    while DNS is unusable, Xray's outbound server route loops into utun, or
+//    HEV only sees upload-side packets. Keep the layered health checks in this
+//    file and treat them as part of the runtime contract.
+// 2. DNS resolver publication and DNS route exclusions must stay together.
+//    `NEDNSSettings` gives macOS a real default resolver while the tunnel is
+//    active; the host route exclusions make packets to those DNS servers leave
+//    through the primary interface instead of recursively depending on the
+//    Packet Tunnel.
+// 3. The remote proxy server needs a host route outside utun. Without it, Xray
+//    tries to reach the server through the same tunnel that depends on Xray
+//    reaching the server.
+// 4. The packet path is intentionally IPv4-only until IPv6 route exclusions and
+//    IPv6 health checks are designed as one feature. Partial IPv6 support caused
+//    "connected but browser does not load" failures.
+// 5. Do not replace the Xray outbound server domain with an IP here. The
+//    preparer may add Xray DNS host mapping and the provider may exclude the
+//    resolved IP, but the outbound config must preserve domain/SNI/authority
+//    semantics for VLESS, XHTTP, TLS, and Reality transports.
+//
+// The companion architecture note is:
+//   doc/macos_packet_tunnel_architecture.md
+//
+// If this file changes, run a real macOS Packet Tunnel smoke test and verify
+// the golden logs listed in that note, not just a local proxy delay probe.
+
 private let tunnelLog = Logger(
     subsystem: Bundle.main.bundleIdentifier ?? "flutter_vless.XrayTunnel",
     category: "PacketTunnel"
 )
+
+/// Conservative MTU for a nested path of Packet Tunnel -> HEV -> SOCKS -> Xray.
+///
+/// `1500` looked tempting because the physical Wi-Fi interface often advertises
+/// it, but the user-visible path is not just Wi-Fi. It includes utun, HEV, TLS,
+/// and XHTTP/VLESS framing. `1280` avoids fragmentation-sensitive stalls and is
+/// aligned with the minimum IPv6 MTU, even though this implementation currently
+/// keeps the packet path IPv4-only.
 private let tunnelMTU = 1280
+
+/// HEV TCP buffer size used by the validated macOS path.
+///
+/// This is intentionally modest for an extension process. Increasing it can
+/// improve throughput in some environments, but it should be tested together
+/// with memory pressure and long-running browser traffic because extensions run
+/// with tighter lifecycle constraints than the app.
 private let hevTCPBufferSize = 4096
+
+/// System DNS servers published by NetworkExtension and then route-excluded.
+///
+/// Publishing them through `NEDNSSettings` prevents macOS from creating an empty
+/// unreachable resolver while the VPN is active. Excluding host routes for these
+/// same IPs keeps the resolver packets reachable through the primary interface.
 private let dnsServers = ["1.1.1.1", "8.8.8.8"]
 
-/// macOS runs this extension in a separate process from the Flutter app, and the
-/// Runner console does not reliably show extension stdout. Keeping a small
-/// in-memory ring buffer lets the app ask the provider for the exact startup
-/// and health-check evidence that matters on a real device.
+/// Small debug ring buffer shared by all provider callbacks.
+///
+/// macOS Network Extensions are painful to debug because the provider process is
+/// not the Flutter Runner process. `print`/stdout output can disappear, LLDB has
+/// to attach to another process, and Xcode stop/kill often races with provider
+/// teardown. This store keeps the essential startup evidence in memory and, when
+/// App Groups are configured, mirrors it to a shared file so the app can still
+/// show diagnostics when `sendProviderMessage` is temporarily unavailable.
+///
+/// Keep this focused on operational facts, not noisy per-packet logs. The final
+/// regression checklist depends on the exact messages for DNS publication,
+/// server route exclusion, Xray startup, HEV startup, and SOCKS health checks.
 private final class TunnelDebugStore {
     static let shared = TunnelDebugStore()
     private let lock = NSLock()
@@ -32,6 +105,12 @@ private final class TunnelDebugStore {
     private let maxLines = 300
     private var fileURL: URL?
 
+    /// Opens the optional App Group debug file.
+    ///
+    /// The App Group is not just convenience: when the app asks for
+    /// `xray_debug` during startup or shutdown, `NETunnelProviderSession` may
+    /// return nil even though the extension has useful evidence. The shared file
+    /// is the fallback used by the app-side manager.
     func configure(groupIdentifier: String?) {
         lock.lock()
         defer { lock.unlock() }
@@ -47,6 +126,11 @@ private final class TunnelDebugStore {
         try? initialContent.write(to: fileURL!, atomically: true, encoding: .utf8)
     }
 
+    /// Appends one timestamped provider event to memory and the shared file.
+    ///
+    /// This method intentionally swallows file errors. Diagnostics must never
+    /// make the VPN fail to start; the in-memory buffer is still enough for the
+    /// normal provider-message path.
     func append(_ message: String) {
         lock.lock()
         defer { lock.unlock() }
@@ -78,12 +162,40 @@ private func rememberTunnelLog(_ message: String) {
     TunnelDebugStore.shared.append(message)
 }
 
+/// Network Extension Packet Tunnel provider for macOS VPN mode.
+///
+/// This provider owns the validated Packet Tunnel path. It prepares imported
+/// Xray JSON for the extension sandbox, applies NetworkExtension DNS/routing,
+/// starts Xray, starts HEV tun2socks, and exposes debug/stat messages to the app.
+///
+/// Do not collapse this into the proxy-only path. Proxy-only and Packet Tunnel
+/// mode solve different problems:
+///
+/// - Proxy-only configures macOS system proxy settings and cannot capture UDP or
+///   apps that ignore the system proxy.
+/// - Packet Tunnel mode captures IP packets through utun and needs explicit
+///   DNS/server route handling to avoid self-recursion.
+///
+/// The provider deliberately emits multiple health checks because each one
+/// proves a different layer:
+///
+/// - server TCP route check: Xray's remote server is reachable outside utun.
+/// - SOCKS inbound check: local Xray is listening.
+/// - SOCKS CONNECT check: Xray accepts outbound SOCKS requests.
+/// - SOCKS HTTP literal-IP check: response bytes return through Xray.
+/// - URLSession HTTPS through SOCKS: a higher-level client can complete HTTPS.
 open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
 
     private let logger = CustomXRayLogger()
     private var lastTrafficLogDate: Date = .distantPast
     private var hevLogURL: URL?
 
+    /// Legacy callback entrypoint used by macOS NetworkExtension.
+    ///
+    /// Keep this override even though Swift also supports async tunnel
+    /// entrypoints. In practice, using the callback signature made startup
+    /// behavior explicit and avoided ambiguity about which override macOS called
+    /// from generated extension targets.
     open override func startTunnel(options: [String : NSObject]?, completionHandler: @escaping (Error?) -> Void) {
         rememberTunnelLog("Legacy startTunnel entrypoint called")
         tunnelLog.info("Legacy startTunnel entrypoint called")
@@ -99,6 +211,21 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
+    /// Starts the complete Packet Tunnel data path.
+    ///
+    /// Ordering matters:
+    ///
+    /// 1. Normalize Xray JSON before parsing ports/routes.
+    /// 2. Apply `NEPacketTunnelNetworkSettings` before Xray starts, so the route
+    ///    health check observes the real post-tunnel routing table.
+    /// 3. Check the remote server route before Xray startup, so a route loop is
+    ///    visible as a provider diagnostic instead of a vague Xray transport
+    ///    timeout.
+    /// 4. Start Xray before HEV because HEV immediately connects to the local
+    ///    SOCKS inbound.
+    ///
+    /// A later-looking simplification, for example starting Xray first or
+    /// removing the server TCP check, makes failures much harder to classify.
     private func startTunnelAsync(options: [String : NSObject]?) async throws {
         rememberTunnelLog("Starting Xray packet tunnel")
         tunnelLog.info("Starting Xray packet tunnel options=\(String(describing: options), privacy: .public)")
@@ -113,6 +240,11 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
             throw tunnelError("Missing Xray config")
         }
         tunnelLog.info("Received Xray config bytes=\(xrayConfig.count, privacy: .public)")
+        // The imported config is user/server owned, but it still has to be made
+        // safe for an extension sandbox and deterministic Packet Tunnel routing.
+        // If preparation fails, fall back to the original config so unsupported
+        // future formats are not hard-blocked; health checks below will still
+        // reveal whether the runtime path is usable.
         let preparedXrayConfig = prepareXrayConfigForTunnel(xrayConfig) ?? xrayConfig
         let bypassSubnets = providerConfiguration["bypassSubnets"] as? [String] ?? []
         TunnelDebugStore.shared.configure(groupIdentifier: providerConfiguration["groupIdentifier"] as? String)
@@ -126,11 +258,17 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         rememberTunnelLog("Using local Xray inbound port \(parsedConfig.inboundPort), server=\(parsedConfig.serverAddress ?? "nil")")
         tunnelLog.info("Using local Xray inbound port \(parsedConfig.inboundPort, privacy: .public)")
 
+        // `tunnelRemoteAddress` is only a NetworkExtension identity value for
+        // this utun, not the actual VLESS server. The real server is carried in
+        // the Xray outbound and route-excluded below.
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "254.1.1.1")
         settings.mtu = NSNumber(value: tunnelMTU)
         rememberTunnelLog("Configured packet tunnel MTU=\(tunnelMTU)")
         settings.ipv4Settings = {
             let settings = NEIPv4Settings(addresses: ["198.18.0.1"], subnetMasks: ["255.255.0.0"])
+            // Default route through utun is what makes this VPN mode, not just a
+            // local proxy. DNS and server host routes are then excluded to avoid
+            // startup recursion.
             settings.includedRoutes = [NEIPv4Route.default()]
             settings.excludedRoutes = buildIPv4ExcludedRoutes(
                 serverAddress: parsedConfig.serverAddress,
@@ -154,6 +292,9 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
             // resolver packets leave via the primary interface while normal app
             // traffic still follows the default utun route.
             let settings = NEDNSSettings(servers: dnsServers)
+            // Empty string means "match all domains". Without it, macOS can keep
+            // using the pre-tunnel resolver ordering and the browser symptoms
+            // become network-dependent.
             settings.matchDomains = [""]
             return settings
         }()
@@ -173,6 +314,13 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         logSocksInboundHealthCheck(port: parsedConfig.inboundPort)
         self.startSocks5Tunnel(serverPort: parsedConfig.inboundPort)
     }
+
+    /// Stops Xray and HEV.
+    ///
+    /// The HEV log tail is captured before shutdown because it is often the only
+    /// evidence of whether real app traffic reached TCP splice or stayed as UDP
+    /// churn. `Socks5Tunnel.quit()` is intentionally called even after Xray
+    /// stops; HEV is the owner of the utun packet consumer thread.
     open override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         rememberTunnelLog("Stopping Xray packet tunnel, reason=\(reason.rawValue)")
         tunnelLog.info("Stopping Xray packet tunnel, reason: \(reason.rawValue, privacy: .public)")
@@ -186,6 +334,17 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         completionHandler()
     }
 
+    /// Provider-message bridge used by the Flutter app.
+    ///
+    /// This is not a public user API, but it is a critical internal operations
+    /// API. It lets the app poll byte counters and retrieve the provider-side
+    /// proof chain without attaching a debugger to the extension process.
+    ///
+    /// Supported messages:
+    ///
+    /// - `xray_traffic`: HEV byte counters as `up,down`.
+    /// - `xray_debug`: provider ring buffer plus HEV log tail.
+    /// - `xray_delay<url>`: connected Xray delay probe.
     open override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
         if let message = String(data: messageData, encoding: .utf8) {
             if (message == "xray_traffic"){
@@ -235,6 +394,12 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         tunnelLog.info("Packet tunnel wake")
     }
 
+    /// Starts HEV tun2socks against the local Xray SOCKS inbound.
+    ///
+    /// Xray can start successfully while no browser bytes return. HEV is the
+    /// bridge that decides whether utun packets actually become SOCKS sessions.
+    /// For this reason the HEV log is deliberately kept at `debug` level and
+    /// exposed in provider snapshots during the macOS stabilization period.
     private func startSocks5Tunnel(serverPort port: Int) {
         // HEV is the tun2socks bridge: it reads IP packets from NetworkExtension
         // and forwards them into the local SOCKS inbound opened by Xray.
@@ -270,8 +435,13 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
+    /// Starts Xray inside the extension process.
+    ///
+    /// The config passed here should already be normalized by
+    /// `TunnelXrayConfigPreparer`. In particular, file log paths must be cleared
+    /// before this call because imported desktop paths may not exist inside the
+    /// extension sandbox and can fail startup before networking is tested.
     private func startXRay(xrayConfig: Data) throws {
-        // TODO: Set memory limit
         XRaySetMemoryLimit()
 
         // Create an error pointer
@@ -299,6 +469,11 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         tunnelLog.info("XRay stopped \(XRayGetVersion(), privacy: .public)")
     }
 
+    /// Minimal values the provider needs after config normalization.
+    ///
+    /// `serverAddress` intentionally stays as the original outbound domain when
+    /// the config used a domain. The provider resolves it only for route
+    /// exclusions and health checks; Xray keeps the domain semantics.
     private struct ParsedConfig {
         let inboundPort: Int
         let serverAddress: String?
@@ -343,6 +518,20 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         return prepared.data
     }
 
+    /// Builds IPv4 routes that must not enter the Packet Tunnel default route.
+    ///
+    /// This method is one of the most important guardrails in the macOS VPN
+    /// path. The default route goes to utun, but these hosts/subnets must remain
+    /// outside:
+    ///
+    /// - user-provided bypass subnets,
+    /// - DNS servers published through `NEDNSSettings`,
+    /// - the resolved remote proxy server IP.
+    ///
+    /// Removing DNS exclusions can produce a connected VPN with an unusable
+    /// resolver. Removing the server exclusion can create an Xray self-routing
+    /// loop where the server connection tries to traverse the tunnel it is meant
+    /// to establish.
     private func buildIPv4ExcludedRoutes(serverAddress: String?, bypassSubnets: [String]) -> [NEIPv4Route] {
         var routes = bypassSubnets.compactMap { ipv4Route(fromCIDR: $0) }
         // Keep DNS reachable outside the packet tunnel for the current macOS
@@ -372,6 +561,16 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         return routes
     }
 
+    /// Runs layered startup health checks after Xray has had a moment to bind.
+    ///
+    /// These checks intentionally overlap. A lower-level pass does not make the
+    /// higher-level checks redundant:
+    ///
+    /// - SOCKS inbound pass proves Xray opened a local port.
+    /// - CONNECT pass proves Xray accepts an outbound request.
+    /// - literal-IP HTTP pass proves response bytes return through Xray.
+    /// - URLSession HTTPS pass proves a higher-level Apple networking client can
+    ///   complete HTTPS through the same local SOCKS path.
     private func logSocksInboundHealthCheck(port: Int) {
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) {
             // The three checks separate local startup from real Internet reach:
@@ -402,6 +601,12 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
+    /// Calls Xray's own delay API from inside the provider.
+    ///
+    /// This check is useful for comparing with proxy-only behavior, but it is
+    /// not sufficient as a Packet Tunnel success signal. It does not prove
+    /// macOS DNS resolver health, HEV packet forwarding, or browser TCP
+    /// fallback.
     private func xrayInternalDelayHealthCheck(url: String) -> String {
         var error: NSError?
         var delay: Int64 = -1
@@ -412,6 +617,12 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         return "ok delay=\(delay)ms"
     }
 
+    /// Runs a real `URLSession` HTTPS request through the local SOCKS inbound.
+    ///
+    /// This complements the raw socket HTTP probe. It exercises CFNetwork's
+    /// client path, proxy dictionary handling, TLS, and response parsing. A
+    /// `204` response from `https://google.com/generate_204` was the final
+    /// "browser-like client can use this tunnel" proof in the macOS fix.
     private func socksURLSessionHealthCheck(port: Int, url: String) async -> String {
         guard let probeURL = URL(string: url) else {
             return "invalid url"
@@ -447,6 +658,10 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
+    /// Performs only the SOCKS no-auth greeting.
+    ///
+    /// A pass here means "Xray has a local SOCKS inbound and it responds to
+    /// negotiation." It says nothing about routing to the remote server.
     private func socksInboundHealthCheck(port: Int) -> String {
         let fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
         guard fd >= 0 else {
@@ -495,6 +710,12 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         return "ok response=\(response.map { String(format: "%02x", $0) }.joined(separator: " "))"
     }
 
+    /// Verifies that the remote proxy server is reachable after tunnel routes.
+    ///
+    /// This runs after `setTunnelNetworkSettings`, so it observes the real
+    /// routing table with utun installed. If this TCP connect fails, the most
+    /// likely cause is an incorrect/missing server host exclusion or an IPv6
+    /// path that bypasses the IPv4 exclusion strategy.
     private func serverTCPRouteHealthCheck(host: String, port: Int) -> String {
         let addresses = isIPv4Literal(host) ? [host] : resolveIPv4Addresses(for: host)
         guard let addressString = addresses.first else {
@@ -532,6 +753,11 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         return "ok \(addressString):\(port) delay=\(elapsed)ms"
     }
 
+    /// Performs a SOCKS CONNECT to `1.1.1.1:80`.
+    ///
+    /// This is stronger than the greeting but still weaker than an HTTP byte
+    /// check. It proves Xray accepted the request and returned a SOCKS success
+    /// response. It does not prove the remote HTTP response made it back.
     private func socksConnectHealthCheck(port: Int) -> String {
         let fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
         guard fd >= 0 else {
@@ -613,7 +839,8 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
     private func socksHTTPHealthCheck(port: Int) -> String {
         // Use a literal IP here so the health check validates Xray bytes
         // without depending on the extension process resolver after the system
-        // default route has already moved into the packet tunnel.
+        // default route has already moved into the packet tunnel. DNS is tested
+        // separately through route snapshots and URLSession behavior.
         let targetAddress = "1.1.1.1"
         let hostHeader = "1.1.1.1"
         let path = "/cdn-cgi/trace"
@@ -708,6 +935,10 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
+    /// Distinguishes a clean peer close from a socket error.
+    ///
+    /// During the regression, "no bytes returned" was materially different from
+    /// "remote closed after CONNECT". Preserve that distinction in logs.
     private enum SocketReadResult {
         case success([UInt8])
         case closed
@@ -763,6 +994,10 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         bytes.map { String(format: "%02x", $0) }.joined(separator: " ")
     }
 
+    /// Reads only the tail of HEV's debug log for provider snapshots.
+    ///
+    /// Full HEV logs can become very large. The tail is enough to identify
+    /// whether recent traffic is TCP splice, UDP churn, or session timeout.
     private func readHevLogTail() -> String? {
         guard let hevLogURL,
               let data = try? Data(contentsOf: hevLogURL),
@@ -788,6 +1023,11 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         return routes
     }
 
+    /// Parses user bypass subnets.
+    ///
+    /// Only IPv4 bypasses are accepted in the current Packet Tunnel path because
+    /// IPv6 routing is intentionally disabled. Silently accepting IPv6-looking
+    /// values here would give users a false sense of coverage.
     private func ipv4Route(fromCIDR cidr: String) -> NEIPv4Route? {
         let parts = cidr.split(separator: "/")
         guard parts.count == 2,
@@ -816,6 +1056,12 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         ].map(String.init).joined(separator: ".")
     }
 
+    /// Resolves IPv4 addresses for DNS host mapping and route exclusions.
+    ///
+    /// The first IPv4 is also what the server TCP route health check uses. If a
+    /// provider returns multiple A records and one is bad, future work may need
+    /// to test/exclude more than the first, but the current implementation logs
+    /// all resolved addresses that it excludes.
     private func resolveIPv4Addresses(for host: String) -> [String] {
         if isIPv4Literal(host) {
             return [host]

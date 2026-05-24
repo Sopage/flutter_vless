@@ -1,3 +1,4 @@
+
 ## 1.1.0
 
 **Major Release: Desktop Support (macOS & Windows)**
@@ -9,6 +10,9 @@
   * Re-engineered the `XRay.xcframework` build pipeline to support dynamic linking for macOS native targets (Apple Silicon & Intel).
   * Implemented robust lifecycle management to ensure macOS system proxy settings are cleanly restored upon app termination, preventing orphan proxy configurations.
   * Added extensive in-code documentation explaining the limitations of macOS System Proxy (lack of UDP support) and how it affects QUIC/HTTP3 traffic fallback mechanisms in modern browsers.
+  * Documented the macOS Packet Tunnel routing model, DNS invariants, Xray config
+  normalization rules, provider health checks, golden logs, and regression
+  checklist in `doc/macos_packet_tunnel_architecture.md`.
 
 * **Windows Implementation**:
   * Added full support for `ProxyOnly` mode via Windows Registry modification to configure the system proxy.

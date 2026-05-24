@@ -1,6 +1,25 @@
 import 'dart:io';
 import 'dart:math';
 
+// macOS Packet Tunnel setup generator.
+//
+// This command edits the host Flutter app's macOS Xcode project so the app can
+// embed the `XrayTunnel` Network Extension target. The generated extension is
+// intentionally thin:
+//
+//   import flutter_vless_macos_tunnel_support
+//   final class PacketTunnelProvider: FlutterVlessPacketTunnelProvider {}
+//
+// All real tunnel behavior lives in the SwiftPM product
+// `flutter-vless-macos-tunnel-support`. Keeping generated app files tiny avoids
+// copying provider code into every app and makes future fixes land through the
+// plugin package rather than through manual Xcode edits.
+//
+// Idempotency is a hard requirement. Users rerun this after changing bundle ids,
+// regenerating Flutter macOS files, or upgrading the plugin. Every project edit
+// below must tolerate preexisting targets, build phases, package references,
+// entitlements, and framework references.
+
 const tunnelTargetName = 'XrayTunnel';
 const tunnelProductName = 'flutter-vless-macos-tunnel-support';
 const tunnelModuleName = 'flutter_vless_macos_tunnel_support';
@@ -89,12 +108,19 @@ void _writeTunnelFiles(Directory macosDir, String groupId) {
   final tunnelDir = Directory('${macosDir.path}/$tunnelTargetName');
   tunnelDir.createSync(recursive: true);
 
+  // The generated provider is intentionally only a subclass. Do not paste the
+  // full provider implementation here: the implementation is shared through the
+  // SwiftPM support product so the app receives Packet Tunnel DNS/route fixes
+  // when the plugin package updates.
   File('${tunnelDir.path}/PacketTunnelProvider.swift').writeAsStringSync('''
 import $tunnelModuleName
 
 final class PacketTunnelProvider: FlutterVlessPacketTunnelProvider {}
 ''');
 
+  // `NSExtensionPrincipalClass` must point at the generated app-extension
+  // module, not at the SwiftPM module. The subclass above is the bridge from the
+  // extension bundle into the shared provider implementation.
   File('${tunnelDir.path}/Info.plist').writeAsStringSync('''
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -113,6 +139,12 @@ final class PacketTunnelProvider: FlutterVlessPacketTunnelProvider {}
 </plist>
 ''');
 
+  // The extension needs both Network Extension and App Group entitlements:
+  //
+  // - Network Extension lets macOS run the Packet Tunnel provider.
+  // - App Groups let the app and extension share debug logs and future shared
+  //   artifacts. Without a matching App Group on both targets, provider debug
+  //   fallback files cannot be read from the app process.
   File('${tunnelDir.path}/XrayTunnel.entitlements').writeAsStringSync('''
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -135,10 +167,18 @@ final class PacketTunnelProvider: FlutterVlessPacketTunnelProvider {}
 ''');
 
   for (final name in ['DebugProfile.entitlements', 'Release.entitlements']) {
+    // Runner also needs the App Group. The packet tunnel itself runs in the
+    // appex, but the app process saves NETunnelProviderManager preferences and
+    // reads shared debug files.
     _ensureRunnerEntitlement(File('${macosDir.path}/Runner/$name'), groupId);
   }
 }
 
+/// Ensures a Runner entitlement plist contains the values needed to manage and
+/// observe the tunnel.
+///
+/// This edits existing files instead of replacing them wholesale because Flutter
+/// apps often carry additional sandbox, signing, or app-specific entitlements.
 void _ensureRunnerEntitlement(File file, String groupId) {
   if (!file.existsSync()) {
     file.createSync(recursive: true);
@@ -216,6 +256,13 @@ class _PbxProject {
   String text;
   final _random = Random.secure();
 
+  /// Applies all Xcode project changes required for macOS Packet Tunnel mode.
+  ///
+  /// The method intentionally avoids Xcodeproj dependencies and edits the
+  /// project text directly because this command must run from a plain Dart
+  /// environment in user apps. Helpers below are narrow and idempotent: each
+  /// `_ensure...` method first searches for an existing object before inserting
+  /// a new one.
   void configure({
     required String bundleId,
     required String groupId,
@@ -368,6 +415,12 @@ class _PbxProject {
       '$networkBuildFileId /* NetworkExtension.framework in Frameworks */',
     );
 
+    // Older local setups embedded XRay/Tun2Socks frameworks manually. The
+    // supported path now links the SwiftPM support product, which brings the
+    // correct Xray and HEV bindings together with the shared provider code.
+    // Leaving stale manual frameworks in the extension target can cause duplicate
+    // symbols, wrong architectures, or a provider that compiles against old
+    // tunnel-support assumptions.
     _removeFrameworkFromTarget(actualTunnelTargetId, 'XRay.xcframework');
     _removeFrameworkFromTarget(actualTunnelTargetId, 'Tun2SocksKit');
     _removeProjectFileReferences('XRay.xcframework');
@@ -389,6 +442,9 @@ class _PbxProject {
       'packageReferences',
       '$supportPackageId /* XCLocalSwiftPackageReference "$pluginPackageRelativePath" */',
     );
+    // Normalize deployment targets everywhere. Mixed generated 10.15 settings
+    // can leak into SwiftPM/CocoaPods builds and produce warnings or extension
+    // build failures even when Runner itself is configured for macOS 13+.
     _patchAllMacOSDeploymentTargets(deploymentTarget);
     _patchRunnerBuildSettings(bundleId, groupId, deploymentTarget, teamId);
     _patchTunnelBuildSettings(bundleId, deploymentTarget, teamId);

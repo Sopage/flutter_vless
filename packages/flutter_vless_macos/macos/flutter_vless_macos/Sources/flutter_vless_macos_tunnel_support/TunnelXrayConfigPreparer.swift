@@ -1,6 +1,30 @@
 import Foundation
 import Darwin
 
+// MARK: - macOS Packet Tunnel Xray JSON Preparation
+//
+// The provider receives Xray JSON that can come from share links, subscriptions,
+// raw app imports, or user-edited configs. The app-facing parser must preserve
+// protocol details, but the macOS Packet Tunnel needs a few extra invariants:
+//
+// - file logs must not point at paths outside the extension sandbox;
+// - Xray DNS must prefer IPv4 to match the provider's IPv4-only route model;
+// - local SOCKS/HTTP inbounds must listen on 127.0.0.1 for HEV;
+// - HEV traffic entering local inbounds must be forced to the proxy outbound;
+// - UDP/443 must be blackholed to force browser TCP fallback;
+// - the outbound server domain must be preserved for TLS/SNI/Reality/XHTTP
+//   semantics, even when we resolve an IPv4 for route exclusion.
+//
+// Keep this file pure and deterministic. It should not import NetworkExtension
+// or start Xray. That separation is what makes unit tests possible for the
+// highest-risk JSON mutations without launching an extension process.
+
+/// Minimal parsed facts needed by the Packet Tunnel provider.
+///
+/// `serverAddress` is deliberately the logical Xray outbound address. If the
+/// config used a domain, this stays a domain. The provider resolves it later for
+/// host route exclusions, but Xray keeps the original domain so transports that
+/// depend on SNI, Host, authority, or Reality metadata do not break.
 public struct TunnelParsedConfig: Equatable {
     public let inboundPort: Int
     public let serverAddress: String?
@@ -13,6 +37,11 @@ public struct TunnelParsedConfig: Equatable {
     }
 }
 
+/// Result of preparing imported Xray JSON for the macOS extension.
+///
+/// `logMessages` are not cosmetic. They are surfaced in provider debug
+/// snapshots and form the golden checklist for real-device Packet Tunnel
+/// smoke tests.
 public struct TunnelPreparedConfig {
     public let data: Data
     public let logMessages: [String]
@@ -34,6 +63,11 @@ public struct TunnelPreparedConfig {
 /// that mutating or dropping those server-provisioned values can produce a VPN
 /// that connects locally but cannot fetch HTTP bytes.
 public enum TunnelXrayConfigPreparer {
+    /// Parses the values the provider needs after normalization.
+    ///
+    /// SOCKS is preferred over HTTP because HEV speaks SOCKS to Xray. HTTP is a
+    /// fallback only for old or unusual configs. If no local proxy inbound can
+    /// be found, the provider cannot bridge utun packets into Xray.
     public static func parseConfig(jsonData: Data) -> TunnelParsedConfig? {
         guard
             let configJSON = try? JSONSerialization.jsonObject(with: jsonData, options: []) as? [String: Any],
@@ -48,6 +82,18 @@ public enum TunnelXrayConfigPreparer {
         )
     }
 
+    /// Applies macOS Packet Tunnel safety edits to imported Xray JSON.
+    ///
+    /// The goal is not to "improve" user configs in general. The goal is to make
+    /// them safe and deterministic inside this extension. Every mutation below
+    /// is tied to a concrete observed failure:
+    ///
+    /// - file log outputs caused sandbox/path startup failures;
+    /// - non-IPv4 DNS strategies allowed Xray to choose addresses the provider
+    ///   did not route-exclude;
+    /// - missing/remote-listening local inbounds broke HEV;
+    /// - imported route rules sometimes sent HEV traffic to `freedom`;
+    /// - UDP/443 let browser QUIC hide a broken TCP fallback path.
     public static func prepare(
         jsonData: Data,
         resolveIPv4: (String) -> String? = { _ in nil }
@@ -58,6 +104,10 @@ public enum TunnelXrayConfigPreparer {
             }
             var messages: [String] = []
 
+            // Network extensions do not share the app's filesystem assumptions.
+            // Imported configs may contain desktop/mobile log paths that are not
+            // writable here. Clear file outputs and keep logging through the
+            // provider debug bridge instead.
             if var log = configJSON["log"] as? [String: Any] {
                 log["access"] = ""
                 log["error"] = ""
@@ -76,6 +126,9 @@ public enum TunnelXrayConfigPreparer {
 
             ensureXrayDNSUsesIPv4(configJSON: &configJSON, messages: &messages)
 
+            // `AsIs` avoids Xray doing broad IP/domain rewrites that can fight
+            // the provider's explicit server host-route exclusion. More
+            // targeted IPv4 preference is handled in Xray DNS below.
             if var routing = configJSON["routing"] as? [String: Any] {
                 routing["domainStrategy"] = "AsIs"
                 configJSON["routing"] = routing
@@ -116,6 +169,11 @@ public enum TunnelXrayConfigPreparer {
                     if let serverAddress = parseServerAddress(configJSON: ["outbounds": [outbounds[index]]]),
                        shouldResolve(serverAddress) {
                         if let resolvedAddress = resolveIPv4(serverAddress) {
+                            // Preserve the outbound domain in-place, but teach
+                            // Xray to resolve that domain to the same IPv4 that
+                            // the provider will exclude from utun. This keeps
+                            // TLS/SNI/Reality/XHTTP semantics intact while
+                            // preventing server-route recursion.
                             upsertXrayDNSHost(
                                 configJSON: &configJSON,
                                 host: serverAddress,
@@ -129,6 +187,9 @@ public enum TunnelXrayConfigPreparer {
 
                     if var sockopt = streamSettings["sockopt"] as? [String: Any],
                        sockopt.removeValue(forKey: "domainStrategy") != nil {
+                        // `sockopt.domainStrategy` can override the provider's
+                        // IPv4-only model. Remove it so DNS behavior is
+                        // centralized and logged in this preparer.
                         if sockopt.isEmpty {
                             streamSettings.removeValue(forKey: "sockopt")
                         } else {
@@ -162,6 +223,10 @@ public enum TunnelXrayConfigPreparer {
         }
     }
 
+    /// Finds the first non-freedom/non-blackhole outbound server address.
+    ///
+    /// Supports common Xray schemas (`vnext`, `servers`, and flat `address`) so
+    /// both VLESS/VMess-style and other outbound formats can be route-excluded.
     public static func parseServerAddress(configJSON: [String: Any]) -> String? {
         guard let outbounds = configJSON["outbounds"] as? [[String: Any]] else {
             return nil
@@ -192,6 +257,11 @@ public enum TunnelXrayConfigPreparer {
         return nil
     }
 
+    /// Finds the first proxy outbound port.
+    ///
+    /// The provider uses this for the server TCP route health check. Defaulting
+    /// to 443 is reasonable for many VLESS/TLS configs, but parsing the actual
+    /// port avoids false failures on non-standard servers.
     public static func parseServerPort(configJSON: [String: Any]) -> Int? {
         guard let outbounds = configJSON["outbounds"] as? [[String: Any]] else {
             return nil
@@ -220,6 +290,11 @@ public enum TunnelXrayConfigPreparer {
         return nil
     }
 
+    /// Chooses the local inbound port HEV should target.
+    ///
+    /// SOCKS is preferred because HEV is configured as a SOCKS client. HTTP is
+    /// only a compatibility fallback. If `prepare` injected a SOCKS inbound,
+    /// this will find that injected port.
     private static func firstLocalInboundPort(configJSON: [String: Any]) -> Int? {
         guard let inbounds = configJSON["inbounds"] as? [[String: Any]] else {
             return nil
@@ -245,6 +320,12 @@ public enum TunnelXrayConfigPreparer {
         return nil
     }
 
+    /// Forces Xray's own DNS layer to stay in the provider's IPv4 model.
+    ///
+    /// This is separate from `NEDNSSettings`. NetworkExtension DNS controls
+    /// system resolver behavior; Xray DNS controls how Xray resolves its proxy
+    /// outbound and routed destinations. They must agree on address family or
+    /// route exclusions become unreliable.
     private static func ensureXrayDNSUsesIPv4(
         configJSON: inout [String: Any],
         messages: inout [String]
@@ -261,6 +342,11 @@ public enum TunnelXrayConfigPreparer {
         }
     }
 
+    /// Pins an outbound domain inside Xray DNS without mutating the outbound.
+    ///
+    /// This is the key compromise: route exclusion needs an IP, but the outbound
+    /// transport often needs the original domain. `dns.hosts` gives both sides
+    /// the same IPv4 while preserving the outbound's domain string.
     private static func upsertXrayDNSHost(
         configJSON: inout [String: Any],
         host: String,
@@ -274,6 +360,19 @@ public enum TunnelXrayConfigPreparer {
         configJSON["dns"] = dns
     }
 
+    /// Makes local SOCKS/HTTP inbounds safe for HEV and deterministic routing.
+    ///
+    /// Rules:
+    ///
+    /// - listen on loopback only, because HEV and the provider live locally;
+    /// - keep or create stable tags so forced routing can reference them;
+    /// - enable sniffing metadata, but with `routeOnly = true`;
+    /// - ensure SOCKS no-auth and UDP support for HEV;
+    /// - inject a SOCKS inbound if the config lacks one.
+    ///
+    /// `routeOnly = true` is intentional. It lets Xray use sniffed protocol
+    /// hints for routing without rewriting destinations in ways that broke the
+    /// literal-IP health check and made XHTTP behavior fragile.
     private static func normalizeLocalInbounds(
         configJSON: inout [String: Any],
         inbounds: inout [[String: Any]],
@@ -363,6 +462,11 @@ public enum TunnelXrayConfigPreparer {
         return "\(preferred)-\(suffix)"
     }
 
+    /// Ensures there is a blackhole outbound for defensive routing rules.
+    ///
+    /// We prefer reusing an existing blackhole tag because imported configs may
+    /// already have policy around it. If absent, a minimal blackhole outbound is
+    /// added solely for UDP/443 browser fallback control.
     private static func ensureBlackholeOutbound(configJSON: inout [String: Any]) -> String {
         var outbounds = configJSON["outbounds"] as? [[String: Any]] ?? []
         if let tag = outbounds.first(where: { outbound in
@@ -393,6 +497,12 @@ public enum TunnelXrayConfigPreparer {
         return "\(preferred)-\(suffix)"
     }
 
+    /// Blocks UDP/443 to force browser QUIC/HTTP3 traffic back to TCP.
+    ///
+    /// This is not a general statement that UDP is unsupported forever. It is a
+    /// deliberate guard for the currently validated path. QUIC can make browsers
+    /// appear stuck or bypass the TCP evidence we rely on. Until QUIC over this
+    /// Packet Tunnel is explicitly tested, UDP/443 must remain blocked.
     private static func ensureUdp443BlockRule(configJSON: inout [String: Any], outboundTag: String) -> Bool {
         var routing = configJSON["routing"] as? [String: Any] ?? [:]
         var rules = routing["rules"] as? [[String: Any]] ?? []
@@ -416,6 +526,12 @@ public enum TunnelXrayConfigPreparer {
         return true
     }
 
+    /// Forces all local tunnel inbound traffic to the proxy outbound.
+    ///
+    /// Imported configs often contain routing rules intended for normal Xray
+    /// clients, not for a Network Extension feeding system traffic through one
+    /// local inbound. This high-priority rule prevents HEV-originated traffic
+    /// from falling through to `freedom` or another default outbound.
     private static func ensureForceProxyRule(
         configJSON: inout [String: Any],
         inboundTags: [String],
@@ -445,6 +561,13 @@ public enum TunnelXrayConfigPreparer {
         return true
     }
 
+    /// Legacy helper retained for tests/history, but not used by the current
+    /// provider path.
+    ///
+    /// Directly replacing the outbound server domain with an IP was rejected
+    /// because it can break TLS/SNI/Reality/XHTTP semantics. The current design
+    /// resolves the domain for route exclusion and Xray DNS host mapping while
+    /// preserving the outbound domain itself.
     private static func replaceProxyServerDomainWithIPv4(
         outbound: inout [String: Any],
         resolveIPv4: (String) -> String?
