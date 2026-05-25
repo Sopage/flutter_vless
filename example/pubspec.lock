@@ -101,7 +101,7 @@ packages:
       path: "../packages/flutter_vless_android"
       relative: true
     source: path
-    version: "1.0.2"
+    version: "1.1.0"
   flutter_vless_android_emulator:
     dependency: "direct main"
     description:
@@ -117,13 +117,12 @@ packages:
     source: path
     version: "1.1.0"
   flutter_vless_platform_interface:
-    dependency: transitive
+    dependency: "direct overridden"
     description:
-      name: flutter_vless_platform_interface
-      sha256: "1035d723d4ef58efd3174d97b97d01db2eacf3cd9278c9fdf68d3e6ecb82fe16"
-      url: "https://pub.dev"
-    source: hosted
-    version: "1.0.0"
+      path: "../packages/flutter_vless_platform_interface"
+      relative: true
+    source: path
+    version: "1.1.0"
   flutter_vless_windows:
     dependency: "direct overridden"
     description:

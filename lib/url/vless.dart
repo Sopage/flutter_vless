@@ -29,8 +29,8 @@ class VlessURL extends FlutterVlessURL {
       streamSecurity: uri.queryParameters["security"] ?? "",
       allowInsecure: allowInsecure,
       sni: uri.queryParameters["sni"] ?? sni,
-      fingerprint: uri.queryParameters["fp"] ??
-          streamSetting['tlsSettings']?['fingerprint'],
+      fingerprint:
+          uri.queryParameters["fp"] ?? streamSettingsBuilder.tlsFingerprint,
       alpns: uri.queryParameters["alpn"],
       publicKey: uri.queryParameters["pbk"] ?? "",
       shortId: uri.queryParameters["sid"] ?? "",
@@ -65,10 +65,9 @@ class VlessURL extends FlutterVlessURL {
   String get encryption => uri.queryParameters["encryption"] ?? "none";
 
   @override
-  Map<String, dynamic> get outbound1 => {
-        "tag": "proxy",
-        "protocol": "vless",
-        "settings": {
+  Map<String, dynamic> get outbound1 => buildProxyOutbound(
+        protocol: "vless",
+        settings: {
           "vnext": [
             {
               "address": address,
@@ -97,12 +96,5 @@ class VlessURL extends FlutterVlessURL {
           "secretKey": null,
           "peers": null
         },
-        "streamSettings": streamSetting,
-        "proxySettings": null,
-        "sendThrough": null,
-        "mux": {
-          "enabled": false,
-          "concurrency": 8,
-        },
-      };
+      );
 }

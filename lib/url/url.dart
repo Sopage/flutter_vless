@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:flutter_vless/url/xray_config_model.dart';
+
 abstract class FlutterVlessURL {
   FlutterVlessURL({required this.url});
   final String url;
@@ -12,130 +14,52 @@ abstract class FlutterVlessURL {
   String get address => '';
   String get remark => '';
 
-  // This SOCKS inbound is the contract used by the iOS packet tunnel:
-  // HEV/tun2socks forwards device packets here, then Xray sends them to the
-  // selected VLESS outbound. Sniffing is enabled by default so the wrapped
-  // traffic still carries HTTP/TLS/QUIC destination metadata for routing and
-  // diagnostics.
-  Map<String, dynamic> inbound = {
-    "tag": "in_proxy",
-    "port": 10807,
-    "protocol": "socks",
-    "listen": "127.0.0.1",
-    "settings": {
-      "auth": "noauth",
-      "udp": true,
-      "userLevel": 8,
-      "address": null,
-      "port": null,
-      "network": null
-    },
-    "sniffing": {
-      "enabled": true,
-      "destOverride": ["http", "tls", "quic"],
-      "metadataOnly": false
-    },
-    "streamSettings": null,
-    "allocate": null
-  };
-
-  Map<String, dynamic> log = {
-    "access": "",
-    "error": "",
-    "loglevel": "error",
-    "dnsLog": false,
-  };
-
   Map<String, dynamic> get outbound1;
 
-  Map<String, dynamic> outbound2 = {
-    "tag": "direct",
-    "protocol": "freedom",
-    "settings": {
-      "vnext": null,
-      "servers": null,
-      "response": null,
-      "network": null,
-      "address": null,
-      "port": null,
-      "domainStrategy": "AsIs",
-      "redirect": null,
-      "userLevel": null,
-      "inboundTag": null,
-      "secretKey": null,
-      "peers": null
-    },
-    "streamSettings": null,
-    "proxySettings": null,
-    "sendThrough": null,
-    "mux": null
-  };
-
-  Map<String, dynamic> outbound3 = {
-    "tag": "blackhole",
-    "protocol": "blackhole",
-    "settings": {
-      "vnext": null,
-      "servers": null,
-      "response": null,
-      "network": null,
-      "address": null,
-      "port": null,
-      "domainStrategy": null,
-      "redirect": null,
-      "userLevel": null,
-      "inboundTag": null,
-      "secretKey": null,
-      "peers": null
-    },
-    "streamSettings": null,
-    "proxySettings": null,
-    "sendThrough": null,
-    "mux": null
-  };
-
-  // Keep generated configs deterministic for iOS. The packet tunnel installs
-  // concrete route exclusions before Xray starts, so Xray should not introduce
-  // another DNS strategy that can resolve the proxy server differently.
-  Map<String, dynamic> routing = {
-    "domainStrategy": "AsIs",
-    "domainMatcher": null,
-    "rules": [],
-    "balancers": []
-  };
-
-  Map<String, dynamic> get fullConfiguration => {
-        "log": log,
-        "inbounds": [inbound],
-        "outbounds": [outbound1, outbound2, outbound3],
-        "routing": routing,
-      };
+  Map<String, dynamic> get fullConfiguration {
+    final proxyOutbound = outbound1;
+    final document = XrayConfigDocument(
+      log: const XrayLog(),
+      // This SOCKS inbound is the contract used by the iOS packet tunnel:
+      // HEV/tun2socks forwards device packets here, then Xray sends them to the
+      // selected outbound.
+      inbounds: [XrayInbound.localSocksTunnel(userLevel: level)],
+      outbounds: [
+        XrayOutbound(
+          tag: proxyOutbound['tag'] as String? ?? 'proxy',
+          protocol: proxyOutbound['protocol'] as String? ?? '',
+          settings: (proxyOutbound['settings'] as Map).cast<String, dynamic>(),
+          streamSettings: _streamSettingsFromOutbound(proxyOutbound),
+          proxySettings:
+              (proxyOutbound['proxySettings'] as Map?)?.cast<String, dynamic>(),
+          sendThrough: proxyOutbound['sendThrough'] as String?,
+          mux: (proxyOutbound['mux'] as Map?)?.cast<String, dynamic>(),
+        ),
+        XrayOutbound.direct(),
+        XrayOutbound.blackhole(),
+      ],
+      // Keep generated configs deterministic for packet tunnels. Native tunnel
+      // code installs concrete route exclusions, so Xray must not introduce a
+      // second DNS strategy that can resolve the proxy differently.
+      routing: const XrayRouting(),
+    );
+    return document.toJson();
+  }
 
   /// Generate Full Configuration
   ///
   /// indent: json encoder indent
   String getFullConfiguration({int indent = 2}) {
     return JsonEncoder.withIndent(' ' * indent).convert(
-      removeNulls(
-        Map.from(fullConfiguration),
-      ),
+      fullConfiguration,
     );
   }
 
-  late Map<String, dynamic> streamSetting = {
-    "network": network,
-    "security": "",
-    "tcpSettings": null,
-    "kcpSettings": null,
-    "wsSettings": null,
-    "httpSettings": null,
-    "tlsSettings": null,
-    "quicSettings": null,
-    "realitySettings": null,
-    "grpcSettings": null,
-    "dsSettings": null,
-    "sockopt": null
-  };
+  late final XrayStreamSettingsBuilder streamSettingsBuilder =
+      XrayStreamSettingsBuilder(network: network);
+
+  Map<String, dynamic> get streamSetting =>
+      streamSettingsBuilder.build().toJson();
 
   /// Populates Xray `streamSettings` from VLESS URL query parameters.
   ///
@@ -155,16 +79,18 @@ abstract class FlutterVlessURL {
     String? extra,
   }) {
     String sni = '';
-    streamSetting['network'] = transport;
+    streamSettingsBuilder.network = transport;
     if (transport == 'tcp') {
-      streamSetting['tcpSettings'] = {
-        "header": <String, dynamic>{"type": "none", "request": null},
+      final tcpHeader = <String, dynamic>{"type": "none", "request": null};
+      final tcpSettings = <String, dynamic>{
+        "header": tcpHeader,
         "acceptProxyProtocol": null
       };
+      streamSettingsBuilder.tcpSettings = tcpSettings;
       if (headerType == 'http') {
-        streamSetting['tcpSettings']['header']['type'] = 'http';
+        tcpHeader['type'] = 'http';
         if (host != "" || path != "") {
-          streamSetting['tcpSettings']['header']['request'] = {
+          final request = {
             "path": path == null ? ["/"] : path.split(","),
             "headers": {
               "Host": host == null ? "" : host.split(","),
@@ -183,20 +109,17 @@ abstract class FlutterVlessURL {
             "version": "1.1",
             "method": "GET",
           };
-          sni = streamSetting['tcpSettings']['header']['request']['headers']
-                          ['Host']
-                      .length >
-                  0
-              ? streamSetting['tcpSettings']['header']['request']['headers']
-                  ['Host'][0]
-              : sni;
+          tcpHeader['request'] = request;
+          final headers = request['headers'] as Map<String, dynamic>;
+          final hosts = headers['Host'] as List;
+          sni = hosts.isNotEmpty ? hosts.first as String : sni;
         }
       } else {
-        streamSetting['tcpSettings']['header']['type'] = 'none';
+        tcpHeader['type'] = 'none';
         sni = host != "" ? host ?? '' : '';
       }
     } else if (transport == 'kcp') {
-      streamSetting['kcpSettings'] = {
+      streamSettingsBuilder.kcpSettings = {
         "mtu": 1350,
         "tti": 50,
         "uplinkCapacity": 12,
@@ -210,31 +133,33 @@ abstract class FlutterVlessURL {
         "seed": (seed == null || seed == '') ? null : seed,
       };
     } else if (transport == 'ws') {
-      streamSetting['wsSettings'] = {
+      final wsHeaders = {"Host": host ?? ""};
+      final wsSettings = {
         "path": path ?? ['/'],
-        "headers": {"Host": host ?? ""},
+        "headers": wsHeaders,
         "maxEarlyData": null,
         "useBrowserForwarding": null,
         "acceptProxyProtocol": null,
       };
-      sni = streamSetting['wsSettings']['headers']['Host'];
+      streamSettingsBuilder.wsSettings = wsSettings;
+      sni = wsHeaders['Host'] as String;
     } else if (transport == 'h2' || transport == 'http') {
-      streamSetting['network'] = 'h2';
-      streamSetting['h2Setting'] = {
+      streamSettingsBuilder.network = 'h2';
+      final h2Settings = {
         "host": host?.split(",") ?? "",
         "path": path ?? ['/'],
       };
-      sni = streamSetting['h2Setting']['host'].length > 0
-          ? streamSetting['h2Setting']['host'][0]
-          : sni;
+      streamSettingsBuilder.h2Settings = h2Settings;
+      final hosts = h2Settings['host'];
+      sni = hosts is List && hosts.isNotEmpty ? hosts.first as String : sni;
     } else if (transport == 'quic') {
-      streamSetting['quicSettings'] = {
+      streamSettingsBuilder.quicSettings = {
         "security": quicSecurity ?? 'none',
         "key": key ?? '',
         "header": {"type": headerType ?? "none"},
       };
     } else if (transport == 'grpc') {
-      streamSetting['grpcSettings'] = {
+      streamSettingsBuilder.grpcSettings = {
         "serviceName": serviceName ?? "",
         "multiMode": mode == "multi",
       };
@@ -243,9 +168,9 @@ abstract class FlutterVlessURL {
       // XHTTP links often rely on server-specific knobs in `extra`. Preserving
       // them is required for compatibility, but it is not proof the transport
       // will work on iOS; the provider HTTP health check is the real signal.
-      streamSetting['network'] = 'xhttp';
+      streamSettingsBuilder.network = 'xhttp';
       final xhttpExtra = decodeXhttpExtra(extra);
-      streamSetting['xhttpSettings'] = {
+      streamSettingsBuilder.xhttpSettings = {
         "host": host ?? "",
         "mode": mode ?? "auto",
         "path": emptyToDefault(path, "/"),
@@ -301,7 +226,7 @@ abstract class FlutterVlessURL {
     required String? shortId,
     required String? spiderX,
   }) {
-    streamSetting['security'] = streamSecurity;
+    streamSettingsBuilder.security = streamSecurity ?? '';
     Map<String, dynamic> tlsSetting = {
       "allowInsecure": allowInsecure,
       "serverName": sni,
@@ -320,37 +245,53 @@ abstract class FlutterVlessURL {
       "spiderX": spiderX,
     };
     if (streamSecurity == 'tls') {
-      streamSetting['realitySettings'] = null;
-      streamSetting['tlsSettings'] = tlsSetting;
+      streamSettingsBuilder.realitySettings = null;
+      streamSettingsBuilder.tlsSettings = tlsSetting;
     } else if (streamSecurity == 'reality') {
-      streamSetting['tlsSettings'] = null;
-      streamSetting['realitySettings'] = tlsSetting;
+      streamSettingsBuilder.tlsSettings = null;
+      streamSettingsBuilder.realitySettings = tlsSetting;
     }
   }
 
   dynamic removeNulls(dynamic params) {
-    if (params is Map) {
-      var map = {};
-      params.forEach((key, value) {
-        var value0 = removeNulls(value);
-        if (value0 != null) {
-          map[key] = value0;
-        }
-      });
-      if (map.isNotEmpty) {
-        return map;
-      }
-    } else if (params is List) {
-      var list = [];
-      for (var val in params) {
-        var value = removeNulls(val);
-        if (value != null) {
-          list.add(value);
-        }
-      }
-      if (list.isNotEmpty) return list;
-    } else if (params != null) {
-      return params;
+    return sanitizeXrayJson(params);
+  }
+
+  Map<String, dynamic> buildProxyOutbound({
+    required String protocol,
+    required Map<String, dynamic> settings,
+  }) {
+    return XrayOutbound.proxy(
+      protocol: protocol,
+      settings: settings,
+      streamSettings: streamSettingsBuilder.build(),
+    ).toJson();
+  }
+
+  XrayStreamSettings? _streamSettingsFromOutbound(Map<String, dynamic> json) {
+    final value = json['streamSettings'];
+    if (value is XrayStreamSettings) {
+      return value;
+    }
+    if (value is Map<String, dynamic>) {
+      return XrayStreamSettings(
+        network: value['network'] as String? ?? network,
+        security: value['security'] as String? ?? '',
+        tcpSettings: (value['tcpSettings'] as Map?)?.cast<String, dynamic>(),
+        kcpSettings: (value['kcpSettings'] as Map?)?.cast<String, dynamic>(),
+        wsSettings: (value['wsSettings'] as Map?)?.cast<String, dynamic>(),
+        httpSettings: (value['httpSettings'] as Map?)?.cast<String, dynamic>(),
+        h2Settings: (value['h2Setting'] as Map?)?.cast<String, dynamic>(),
+        tlsSettings: (value['tlsSettings'] as Map?)?.cast<String, dynamic>(),
+        quicSettings: (value['quicSettings'] as Map?)?.cast<String, dynamic>(),
+        realitySettings:
+            (value['realitySettings'] as Map?)?.cast<String, dynamic>(),
+        grpcSettings: (value['grpcSettings'] as Map?)?.cast<String, dynamic>(),
+        xhttpSettings:
+            (value['xhttpSettings'] as Map?)?.cast<String, dynamic>(),
+        dsSettings: (value['dsSettings'] as Map?)?.cast<String, dynamic>(),
+        sockopt: (value['sockopt'] as Map?)?.cast<String, dynamic>(),
+      );
     }
     return null;
   }

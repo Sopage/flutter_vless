@@ -2,165 +2,45 @@
 [![Pub Publisher](https://img.shields.io/pub/publisher/flutter_vless)](https://pub.dev/publishers/tfox.dev/packages)
 [![Pub Version](https://img.shields.io/pub/v/flutter_vless.svg)](https://pub.dev/packages/flutter_vless)
 
-**Flutter plugin to run VLESS/VMESS as a local proxy and VPN on Android, iOS, macOS, and Windows. V2Ray/Xray core. Shadowsocks, Trojan, Socks 5 support.**
+Federated Flutter plugin for VLESS, VMESS, Trojan, Shadowsocks, and SOCKS on Android, iOS, macOS, and Windows.
 
-⚡️ Provides fine-grained routing for domains, sites, and apps, with built-in status tracking, delay testing, and extended configuration options.
+This package exposes a small Dart API for parsing share links and subscriptions, generating Xray configs, and starting either proxy-only or VPN/tunnel mode through platform backends.
 
->  In contrast to similar plugins, we provide __iOS__, __macOS__, __Android__, and __Windows__ versions out of the box and for free, with the package being fully open-source.
+The package is open source and free to use, with Android, iOS, macOS, and Windows support included out of the box. The longer guides live under `doc/`.
+For generated API docs, see the `documentation` link in `pubspec.yaml`.
 
-> Make sure to give a like on pub.dev and star on GitHub if this package was useful for you <3
+## At A Glance
 
+| Platform | Mode | Notes |
+| --- | --- | --- |
+| Android | VPN, proxy-only | `blockedApps` is supported. Emulator support is split into a separate package. |
+| iOS | VPN, proxy-only | Real device required for packet-tunnel testing. App Group and Network Extension are required. |
+| macOS | VPN, proxy-only | Packet Tunnel setup is required. See the macOS architecture notes for route and DNS details. |
+| Windows | VPN, proxy-only | Xray must be available locally. Admin rights may be required for tunnel mode. |
+| Web | Not supported | The plugin does not register a web implementation. |
 
-## Platform Support
+## Key Capabilities
 
-| Platform | Support | Min Version | Behavior |
-|----------|---------|-------------|----------|
-| Android  | ✅      | API 23 (Android 6.0) | Full functionality |
-| iOS      | ✅      | iOS 15 | Full functionality |
-| MacOS    | β      | macOS 13 | Full functionality |
-| Windows  | β      | Windows 10 | Full functionality |
-| Web      | 1/2    | Chrome | Base flutter layer ready |
+- Android 16KB page size support for modern builds.
+- Swift Package Manager support for iOS and macOS integration.
+- Separate Android emulator package for x86_64 emulator targets.
+- Share-link, subscription, raw JSON, Clash YAML, and sing-box import paths.
+- Proxy-only mode and VPN/tunnel mode.
+- Runtime delay checks and status tracking.
+- Typed Xray config helpers for more explicit advanced configuration.
 
-## Table of contents
+## Recommended Reading
 
-- [Key Features](#key-features)
-- [Quick Start (TL;DR)](#quick-start-tldr)
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [Platform setup (step-by-step)](#platform-setup-step-by-step)
-  - [iOS](#ios)
-  - [macOS](#macos)
-  - [Android](#android)
-  - [Windows](#windows)
-- [Usage examples](#usage-examples)
-  - [URL parser](#url-parser-)
-  - [Edit configuration](#edit-configuration)
-  - [Start / stop FlutterVless](#start--stop-fluttervless)
-- [Contributing / Contact / License](#contributing--contact--license)
-
-
----
-
-## Key features
-- Supports iOS, macOS, Android, and Windows out of the box, with routing and similar features available
-- **Supports Android 16KB page size (API 35+)**
-- Supports Android Emulator and different architectures specifically: **x86, x86_64, arm64-v8a, armeabi-v7a**.
-- Run flutter_vless as a local proxy or using the VPN mode (Network Extension / VpnService / TUN/TAP).
-- Proxy-only mode starts local Xray without installing a VPN route; VPN mode routes device traffic through Network Extension / VpnService / TUN/TAP.
-- Parse VLESS/VMESS/Trojan/Shadowsocks/SOCKS share links and generate ready-to-run Xray configurations.
-- Import raw Xray JSON, base64 subscription lists, Clash YAML, and sing-box JSON for supported Xray protocols.
-- Preserve modern Xray VLESS **Post-Quantum Encryption** values such as `mlkem768x25519plus...` when they are present in URLs or JSON.
-- Measure server delay (ping) for a configuration.
-- Edit configuration (ports, DNS, routing, etc.).
-- Supports Swift Package Manager.
-
----
-
-
-## Quick Start (TL;DR)
-
-1. Install the package (see [Installation](#installation)).
-2. Complete platform setup (iOS / Android).
-3. Initialize the plugin and start flutter_vless from your app.
-
-- [Simple vless client written in flutter](https://github.com/XIIIFOX/flutter_vless/blob/master/example/lib/main.dart)
-
-Minimal copy‑paste example:
-
-```dart
-import 'package:flutter/material.dart';
-import 'package:flutter_vless/flutter_vless.dart';
-
-void main() => runApp(const MyApp());
-
-class MyApp extends StatefulWidget {
-  const MyApp({super.key});
-
-  @override
-  State<MyApp> createState() => _MyAppState();
-}
-
-class _MyAppState extends State<MyApp> {
-  late final FlutterVless _flutterVless;
-
-  @override
-  void initState() {
-    super.initState();
-    _flutterVless = FlutterVless(onStatusChanged: (status) {
-      print('VLESS status: $status');
-    });
-    _init();
-  }
-
-  Future<void> _init() async {
-    await _flutterVless.initializeVless(
-      providerBundleIdentifier: 'com.example.myapp',
-      groupIdentifier: 'group.com.example.myapp',
-    );
-  }
-
-  Future<void> _startFromShareLink(String shareLink) async {
-    final FlutterVlessURL parser = FlutterVless.parse(shareLink);
-    final String config = parser.getFullConfiguration();
-
-    final int delayMs = await _flutterVless.getServerDelay(config: config);
-    print('Server delay: ${delayMs}ms');
-
-    final bool allowed = await _flutterVless.requestPermission();
-    if (!allowed) return;
-
-    await _flutterVless.startVless(
-      remark: parser.remark,
-      config: config,
-    );
-  }
-
-  Future<void> _stop() async {
-    await _flutterVless.stopVless();
-  }
-
-  @override
-  Widget build(BuildContext context) => Container();
-}
-```
-
----
-
-## Requirements
-
-- Flutter SDK (the minimum supported version used by the package).
-- Android: recommended `minSdkVersion` >= 23; set `targetSdkVersion` to a recent API.
-- iOS: `iOS Deployment Target` >= 15.0 (may vary depending on Network Extension usage).
-- Windows: Windows 10 or later. Admin rights may be required for full VPN mode (TUN/TAP interface).
-- Running VPN mode on iOS requires Network Extension and a provisioning profile that allows it.
-
----
+1. New user setup: [Getting Started](doc/getting-started.md)
+2. Platform setup: [Platform Guides](doc/platform/README.md)
+3. Config formats and advanced editing: [Configuration Guide](doc/configuration.md)
+4. If something fails: [Troubleshooting](doc/troubleshooting.md)
 
 ## Installation
 
-### From pub.dev
-
 ```yaml
 dependencies:
-  flutter_vless: replace_with_current_plugin_version
-```
-
-### From Git
-
-```yaml
-dependencies:
-  flutter_vless:
-    git:
-      url: https://github.com/XIIIFOX/flutter_vless.git
-      ref: main
-```
-
-### Local development
-
-```yaml
-dependencies:
-  flutter_vless:
-    path: ../flutter_vless
+  flutter_vless: ^1.1.0
 ```
 
 Then run:
@@ -169,191 +49,103 @@ Then run:
 flutter pub get
 ```
 
----
-
-## Emulator Support (Android x86_64)
-
-To reduce the package size, x86_64 binaries (required for most Android emulators) are split into a separate package.
-
-If you need to run your app on an x86_64 emulator, add `flutter_vless_android_emulator` to your `pubspec.yaml`:
+If you need the Android emulator binaries, add:
 
 ```yaml
 dependencies:
-  flutter_vless: ^x.y.z
-  flutter_vless_android_emulator: ^x.y.z # Add this for emulator support
+  flutter_vless_android_emulator: ^1.1.0
 ```
 
----
-
-## Platform setup (step-by-step)
-
-Follow the platform steps below — without these the plugin cannot run VPN/Network Extension.
-
-### iOS
-See [IOS_SETUP.md](./IOS_SETUP.md) for detailed iOS setup instructions.
-
-### macOS
-
-See [MACOS_SETUP.md](./MACOS_SETUP.md) for detailed macOS setup instructions.
-
-Quick setup:
-
-```bash
-dart run flutter_vless:setup_macos_vpn \
-  --bundle-id com.example.myapp \
-  --group-id group.com.example.myapp \
-  --team-id ABCDE12345
-```
-
-macOS VPN mode requires a macOS 13.0 deployment target or newer.
-
-### Windows
-
-1. Download Xray-core version 25.10.15 or later from:
-   https://github.com/XTLS/Xray-core/releases
-
-2. Look for `Xray-windows-64.zip` or `Xray-windows-32.zip` depending on your system
-
-3. Extract the archive and locate "xray.exe"
-
-4. Copy "xray.exe" into the windows folder of your project
-
-6. The final structure should be:
-   example/
-     windows/
-       xray/
-         xray.exe  <-- Your xray.exe should be here 
-
-**Important**:  See [XRAY_SETUP.md](./windows/XRAY_SETUP.md) for detailed info.
-
-### Android
-
-1.  Add the attribute android:extractNativeLibs="true" to the `<application>` tag in your AndroidManifest.xml.
-
-```xml
-<application
-    android:name=".MyApplication"
-    android:label="@string/app_name"
-    android:icon="@mipmap/ic_launcher"
-    android:extractNativeLibs="true">
-    . . .
-</application>
-
-```
-
-2. Set minSdkVersion to >= 23. Ensure your `minSdkVersion` and `targetSdkVersion` match plugin and Play Store requirements.
-
-> Google Play note: apps that modify network traffic may require a privacy policy and additional disclosure in the store listing.
-
----
-
-## Usage examples
-
-
-### URL parser
+## Quick Start
 
 ```dart
+import 'package:flutter/foundation.dart';
 import 'package:flutter_vless/flutter_vless.dart';
 
-final String link = 'vmess://...'; // or vless://, trojan://, ss://, etc.
-FlutterVlessURL parsed = FlutterVless.parse(link);
-print('Remark: ${parsed.remark}');
-final String config = parsed.getFullConfiguration();
-print('Config JSON: $config');
-```
-
-For subscriptions, keep every supported profile:
-
-```dart
-final List<FlutterVlessURL> profiles = FlutterVless.parseMany(subscriptionText);
-```
-
-`parse` and `parseMany` accept single share links, raw Xray JSON, base64
-share-link subscriptions, Clash YAML, and sing-box JSON. Unsupported
-sing-box-only protocols are skipped instead of being converted into broken Xray
-configs.
-
-### Edit Configuration
-
-An example of how we work with routing through configuration is available in our example.
-
-``` dart
-// Change listening port
-parsed.inbound['port'] = 10890;
-// Change listening host
-parsed.inbound['listen'] = '0.0.0.0';
-// Change dns
-parsed.dns = {
-    "servers": ["1.1.1.1"]
-};
-// and ...
-```
-
-
-### Start / Stop FlutterVless
-
-```dart
-final flutterVless = FlutterVless(onStatusChanged: (status) => print(status));
-
-await flutterVless.initializeVless(
-  providerBundleIdentifier: 'com.example.myapp',
-  groupIdentifier: 'group.com.example.myapp',
+final flutterVless = FlutterVless(
+  onStatusChanged: (status) {
+    debugPrint(
+      'status=${status.state} connection=${status.connectionState.name} '
+      'delay=${status.duration}s',
+    );
+  },
 );
 
-if (await flutterVless.requestPermission()) {
-  await flutterVless.startVless(
-    remark: 'My server',
-    config: newConfig,
-    blockedApps: null, // list of package names
-    bypassSubnets: FlutterVless.defaultBypassSubnets(),
-    proxyOnly: false,
-  );
-}
+Future<void> connect(String shareLink) async {
+  final parsed = FlutterVless.parse(shareLink);
+  final config = parsed.getFullConfiguration();
 
-await flutterVless.stopVless();
+  await flutterVless.initializeVless(
+    providerBundleIdentifier: 'com.example.myapp',
+    groupIdentifier: 'group.com.example.myapp',
+  );
+
+  if (await flutterVless.requestPermission()) {
+    await flutterVless.startVless(
+      remark: parsed.remark,
+      config: config,
+    );
+  }
+}
 ```
 
+For proxy-only mode, set `proxyOnly: true` in `startVless()` and skip the VPN permission step on the paths that do not require a tunnel.
 
----
+`startVless()` and `getServerDelay()` validate that the provided config is a
+well-formed Xray JSON object before the native layer sees it.
 
+## Supported Inputs
 
-## FAQ / common issues
+`FlutterVless.parse()` and `FlutterVless.parseMany()` support:
 
-**Q: The VPN permission is granted but the VPN doesn’t start.** A: Check that `providerBundleIdentifier` and `groupIdentifier` match the values in Xcode, and that the provisioning profile allows Network Extensions.
+- `vmess://`
+- `vless://`
+- `trojan://`
+- `ss://`
+- `socks://`
+- raw Xray JSON
+- base64 subscription payloads
+- Clash YAML
+- sing-box JSON
 
-**Q: My Play Store submission was rejected.** A: Ensure your app includes a clear privacy policy and a disclosure about VPN/proxy usage in the store listing.
+Use `parse()` for a single share link or a raw config, and `parseMany()` when you want to keep every supported profile from a subscription payload.
 
-**Q: Shows very high latency.** A: Verify DNS, server address, and network reachability. Try from a different network or device to exclude local network issues.
+## Advanced Usage
 
----
+The parsed URL objects expose low-level Xray maps for advanced configuration work, including inbound, routing, log, and stream settings. That is intentionally powerful, but it is also intentionally low-level.
 
-## Contributing / Contact / License
+If you want a typed config builder instead of mutating maps, see
+`lib/url/xray_config_model.dart` and `lib/url/xray_config_validator.dart`.
+Those helpers are useful when you want to construct or validate a config before
+turning it into JSON.
 
-[Contributing](./CONTRIBUTING.md)
+If you need to edit the runtime config, start with [Configuration Guide](doc/configuration.md) and [Architecture Notes](doc/architecture.md).
 
-[License](./LICENSE)
+## Example App
 
-### Contact
-  - [Telegram](https://t.me/ley_dey)
-  - By email - 13fox.comp@gmail.com
+The bundled example app shows clipboard import, routing edits, proxy-only mode, and status tracking:
 
-### Donation
-BTC:
+[example/lib/main.dart](example/lib/main.dart)
 
-bc1qeqlrphnwmpt2qsfz7uk8wnv62vyq9ef6lansh4
+## Platform Setup
 
-ETH:
+- [Android](doc/platform/android.md)
+- [iOS](doc/platform/ios.md)
+- [macOS](doc/platform/macos.md)
+- [Windows](doc/platform/windows.md)
 
-0x49F7af0D7Afc7e174b086e24DA5A8649586e23d1
+## Package Docs
 
-USDT TRC20: 
+- [Docs index](doc/README.md)
+- [Getting Started](doc/getting-started.md)
+- [Configuration Guide](doc/configuration.md)
+- [Architecture Notes](doc/architecture.md)
+- [Troubleshooting](doc/troubleshooting.md)
 
-TTUe9Ca3S83LTJ2r6e7B7XguNvru2MoAmb
+## Contributing
 
-USDT TON:
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
-UQBot8FUuYpyW8cjq306-qiEqnpfNjTHxhC1dk_6XDcJ5a1J
+## License
 
-
-
-All rights reserved. 13FOX - https://tfox.dev
+[MIT License](LICENSE)

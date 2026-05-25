@@ -30,7 +30,7 @@ class VmessURL extends FlutterVlessURL {
     );
     String? fingerprint = (rawConfig['fp'] != null && rawConfig['fp'] != '')
         ? rawConfig['fp']
-        : streamSetting['tlsSettings']?['fingerprint'];
+        : streamSettingsBuilder.tlsFingerprint;
     super.populateTlsSettings(
       streamSecurity: rawConfig['tls'],
       allowInsecure: allowInsecure,
@@ -54,10 +54,9 @@ class VmessURL extends FlutterVlessURL {
   int get port => int.tryParse(rawConfig['port'].toString()) ?? super.port;
 
   @override
-  Map<String, dynamic> get outbound1 => {
-        "tag": "proxy",
-        "protocol": "vmess",
-        "settings": {
+  Map<String, dynamic> get outbound1 => buildProxyOutbound(
+        protocol: "vmess",
+        settings: {
           "vnext": [
             {
               "address": address,
@@ -88,12 +87,5 @@ class VmessURL extends FlutterVlessURL {
           "secretKey": null,
           "peers": null
         },
-        "streamSettings": streamSetting,
-        "proxySettings": null,
-        "sendThrough": null,
-        "mux": {
-          "enabled": false,
-          "concurrency": 8,
-        }
-      };
+      );
 }

@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter_vless/url/shadowsocks.dart';
 import 'package:flutter_vless/url/socks.dart';
 import 'package:flutter_vless/url/subscription.dart';
@@ -8,6 +6,7 @@ import 'package:flutter_vless/url/url.dart';
 import 'package:flutter_vless/url/vless.dart';
 import 'package:flutter_vless/url/vmess.dart';
 import 'package:flutter_vless/url/xray_config.dart';
+import 'package:flutter_vless/url/xray_config_validator.dart';
 import 'package:flutter_vless_platform_interface/flutter_vless_platform_interface.dart';
 
 export 'package:flutter_vless_platform_interface/flutter_vless_platform_interface.dart';
@@ -15,6 +14,8 @@ export 'url/url.dart';
 
 class FlutterVless {
   FlutterVless({required this.onStatusChanged});
+
+  static const XrayConfigValidator _configValidator = XrayConfigValidator();
 
   /// This method is called when FlutterVless status has changed.
   final void Function(VlessStatus status) onStatusChanged;
@@ -79,13 +80,7 @@ class FlutterVless {
     bool proxyOnly = false,
     String notificationDisconnectButtonName = "DISCONNECT",
   }) async {
-    try {
-      if (jsonDecode(config) == null) {
-        throw ArgumentError('The provided string is not valid JSON');
-      }
-    } catch (_) {
-      throw ArgumentError('The provided string is not valid JSON');
-    }
+    _configValidator.validateJsonString(config);
 
     await VlessPlatform.instance.startVless(
       remark: remark,
@@ -106,13 +101,7 @@ class FlutterVless {
   Future<int> getServerDelay(
       {required String config,
       String url = 'https://google.com/generate_204'}) async {
-    try {
-      if (jsonDecode(config) == null) {
-        throw ArgumentError('The provided string is not valid JSON');
-      }
-    } catch (_) {
-      throw ArgumentError('The provided string is not valid JSON');
-    }
+    _configValidator.validateJsonString(config);
     return await VlessPlatform.instance
         .getServerDelay(config: config, url: url);
   }

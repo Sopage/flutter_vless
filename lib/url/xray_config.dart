@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_vless/url/url.dart';
+import 'package:flutter_vless/url/xray_config_validator.dart';
 
 /// Raw Xray JSON import wrapper.
 ///
@@ -24,9 +25,7 @@ class XrayJsonConfig extends FlutterVlessURL {
       throw ArgumentError('JSON config is invalid');
     }
 
-    if (rawConfig['outbounds'] is! List<dynamic>) {
-      throw ArgumentError('JSON config is invalid');
-    }
+    const XrayConfigValidator().validate(rawConfig);
   }
 
   late final Map<String, dynamic> rawConfig;

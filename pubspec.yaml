@@ -3,6 +3,7 @@ description: Flutter plugin to run VLESS/VMESS as a local proxy and VPN on Andro
 
 version: 1.1.0
 homepage: https://github.com/XIIIFOX/flutter_vless/
+documentation: https://github.com/XIIIFOX/flutter_vless/blob/main/doc/README.md
 tags:
      - VLESS
      - v2ray
@@ -25,8 +26,8 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  flutter_vless_platform_interface: ^1.0.0
-  flutter_vless_android: ^1.0.2
+  flutter_vless_platform_interface: ^1.1.0
+  flutter_vless_android: ^1.1.0
   flutter_vless_macos: ^1.1.0
   flutter_vless_windows: ^1.1.0
   yaml: ^3.1.2
@@ -39,12 +40,7 @@ dev_dependencies:
 executables:
   setup_macos_vpn: setup_macos_vpn
 
-# For information on the generic Dart part of this file, see the
-# following page: https://dart.dev/tools/pub/pubspec
-
-# The following section is specific to Flutter packages.
 flutter:
-
   plugin:
     platforms:
       android:
@@ -55,13 +51,3 @@ flutter:
         default_package: flutter_vless_macos
       windows:
         default_package: flutter_vless_windows
-
-dependency_overrides:
-  flutter_vless_platform_interface:
-    path: packages/flutter_vless_platform_interface
-  flutter_vless_android:
-    path: packages/flutter_vless_android
-  flutter_vless_macos:
-    path: packages/flutter_vless_macos
-  flutter_vless_windows:
-    path: packages/flutter_vless_windows

@@ -1,3 +1,10 @@
+## 1.1.0
+
+* Replaced Android Dart boilerplate with the shared `VlessMethodChannelAdapter`.
+* Removed template `getPlatformVersion` scaffold files.
+* Moved `flutter_lints` to `dev_dependencies`.
+* Removed publish-time dependency overrides from `pubspec.yaml`.
+
 ## 1.0.2
 
 * XRay version up

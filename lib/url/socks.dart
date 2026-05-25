@@ -105,9 +105,9 @@ class SocksURL extends FlutterVlessURL {
   }
 
   @override
-  Map<String, dynamic> get outbound1 => {
-        "protocol": "socks",
-        "settings": {
+  Map<String, dynamic> get outbound1 => buildProxyOutbound(
+        protocol: "socks",
+        settings: {
           "servers": [
             {
               "address": address,
@@ -122,8 +122,5 @@ class SocksURL extends FlutterVlessURL {
             }
           ]
         },
-        "streamSettings": streamSetting,
-        "tag": "proxy",
-        "mux": {"concurrency": 8, "enabled": false},
-      };
+      );
 }

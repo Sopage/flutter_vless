@@ -1,4 +1,3 @@
-
 ## 1.1.0
 
 **Major Release: Desktop Support (macOS & Windows)**
@@ -25,6 +24,11 @@
   * Fixed an issue where injecting XRay API routing rules without a corresponding `api` outbound would break the XRay internal dispatcher and cause connection drops.
   * Ensured `sniffing` is strictly enabled for injected HTTP/SOCKS proxies to support domain-based routing rules correctly across all platforms.
   * Updated dependencies and improved general codebase documentation for edge cases.
+  * Added typed Xray configuration models and schema validation for generated and raw configs.
+  * Hardened `startVless` and server-delay config validation beyond basic JSON parsing.
+  * Shared the Dart MethodChannel/EventChannel implementation across platform packages.
+  * Added robust `VlessStatus` parsing with typed connection states and value semantics.
+  * Cleaned publish-time pubspec metadata and moved local path overrides out of package pubspecs.
 
 ## 1.0.5
 
