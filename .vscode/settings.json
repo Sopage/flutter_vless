@@ -1,3 +1,6 @@
 {
-    "cmake.sourceDirectory": "C:/Users/jojor/develop/flutter_vless/windows"
+    "cmake.sourceDirectory": "${workspaceFolder}/example/windows",
+    "cmake.configureOnOpen": false,
+    "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+    "C_Cpp.errorSquiggles": "disabled"
 }

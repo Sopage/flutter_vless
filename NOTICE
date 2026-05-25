@@ -1,0 +1,17 @@
+flutter_vless
+
+Copyright (c) 2024-2026 13FOX Studio / tfox.dev.
+
+flutter_vless is developed and maintained by 13FOX Studio.
+
+Official website: https://tfox.dev
+Official package: https://pub.dev/packages/flutter_vless
+Official publisher: https://pub.dev/publishers/tfox.dev
+Official repository: https://github.com/XIIIFOX/flutter_vless
+
+Redistributions, forks, and derived packages must preserve the copyright notice
+and MIT license notice where required by the license.
+
+This project integrates with Xray/V2Ray-compatible runtimes and protocols. Xray,
+V2Ray, Flutter, Dart, Android, iOS, macOS, and Windows are trademarks or project
+names of their respective owners.

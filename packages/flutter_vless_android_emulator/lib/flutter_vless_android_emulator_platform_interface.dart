@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 13FOX Studio / tfox.dev.
+// SPDX-License-Identifier: MIT
+
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import 'flutter_vless_android_emulator_method_channel.dart';

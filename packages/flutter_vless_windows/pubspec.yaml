@@ -1,7 +1,12 @@
 name: flutter_vless_windows
 description: Windows implementation of the flutter_vless plugin.
 version: 1.1.0
-homepage: https://github.com/XIIIFOX/flutter_vless/
+homepage: https://tfox.dev
+repository: https://github.com/XIIIFOX/flutter_vless
+issue_tracker: https://github.com/XIIIFOX/flutter_vless/issues
+documentation: https://github.com/XIIIFOX/flutter_vless/blob/main/doc/platform/windows.md
+funding:
+  - https://tfox.dev
 
 environment:
   sdk: '>=3.4.0 <4.0.0'

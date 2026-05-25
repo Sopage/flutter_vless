@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 13FOX Studio / tfox.dev.
+// SPDX-License-Identifier: MIT
+
 #include "include/flutter_vless/flutter_vless_plugin.h"
 
 #include <flutter/method_channel.h>
@@ -694,4 +697,3 @@ void FlutterVlessPluginRegisterWithRegistrar(
     flutter::PluginRegistrarManager::GetInstance()
       ->GetRegistrar<flutter::PluginRegistrarWindows>(registrar));
 }
-

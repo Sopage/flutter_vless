@@ -5,9 +5,9 @@ Pod::Spec.new do |s|
   s.description      = <<-DESC
 macOS implementation of the flutter_vless plugin.
                        DESC
-  s.homepage         = 'https://github.com/XIIIFOX/flutter_vless/'
+  s.homepage         = 'https://tfox.dev'
   s.license          = { :type => 'MIT', :file => '../LICENSE' }
-  s.author           = { 'Your Company' => 'email@example.com' }
+  s.author           = { '13FOX Studio' => '13fox.comp@gmail.com' }
 
   s.source = { :path => '..' }
   s.source_files = 'flutter_vless_macos/Sources/flutter_vless_macos/**/*.swift'

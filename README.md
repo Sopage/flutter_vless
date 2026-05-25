@@ -9,6 +9,19 @@ This package exposes a small Dart API for parsing share links and subscriptions,
 The package is open source and free to use, with Android, iOS, macOS, and Windows support included out of the box. The longer guides live under `doc/`.
 For long-form docs, see the `documentation` link in `pubspec.yaml`.
 
+## Official Package
+
+`flutter_vless` is developed and maintained by 13FOX Studio / tfox.dev.
+
+- Official package: [pub.dev/packages/flutter_vless](https://pub.dev/packages/flutter_vless)
+- Official publisher: [pub.dev/publishers/tfox.dev](https://pub.dev/publishers/tfox.dev)
+- Official repository: [github.com/XIIIFOX/flutter_vless](https://github.com/XIIIFOX/flutter_vless)
+- Website: [tfox.dev](https://tfox.dev)
+
+Redistributions and derived packages must preserve the copyright and MIT
+license notices required by the license. See [NOTICE](NOTICE) and
+[TRADEMARKS.md](TRADEMARKS.md).
+
 ## At A Glance
 
 | Platform | Mode | Notes |
@@ -170,6 +183,12 @@ The bundled example app shows clipboard import, routing edits, proxy-only mode, 
 ## Contributing
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+
+## Authorship And Trademarks
+
+`flutter_vless` is maintained by 13FOX Studio / tfox.dev. See
+[AUTHORS](AUTHORS), [NOTICE](NOTICE), and [TRADEMARKS.md](TRADEMARKS.md) for
+attribution and brand-use notes.
 
 ## License
 
