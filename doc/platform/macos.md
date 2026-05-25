@@ -2,6 +2,23 @@
 
 macOS uses a Packet Tunnel Network Extension path for VPN mode and a separate local proxy path for proxy-only mode.
 
+## Quick Run The Example
+
+Use the example app first if you want to verify that Xcode signing, the Packet
+Tunnel target, and the Swift package products are wired correctly.
+
+```bash
+cd example
+flutter pub get
+open macos/Runner.xcworkspace
+```
+
+Set your Apple Team on both macOS targets, then run from Xcode or:
+
+```bash
+flutter run -d macos
+```
+
 ## What You Need
 
 - macOS 13 or newer for the validated setup
@@ -10,6 +27,8 @@ macOS uses a Packet Tunnel Network Extension path for VPN mode and a separate lo
 - the setup command from the package
 
 ## Recommended Setup Command
+
+For your own app, run the setup command from your Flutter app root:
 
 ```bash
 dart run flutter_vless:setup_macos_vpn \
@@ -40,6 +59,17 @@ That note explains the routing, DNS, and packet-tunnel invariants that matter wh
 - proxy-only mode and tunnel mode are different code paths
 - the packet tunnel is more sensitive to DNS and route configuration than a normal proxy-only start
 - use the architecture note before changing packet tunnel logic
+
+## PacketTunnelProvider.swift
+
+The example's macOS tunnel target uses a thin provider wrapper:
+
+```text
+example/macos/XrayTunnel/PacketTunnelProvider.swift
+```
+
+The shared implementation lives in the package support target. That keeps app
+projects from copying the full provider manually.
 
 ## Common Pitfalls
 

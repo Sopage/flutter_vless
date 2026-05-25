@@ -11,4 +11,6 @@ Read the guide for the target you are working on:
 
 - Start with the platform guide before changing code.
 - Keep `proxyOnly` and full tunnel mode separate in your mental model.
+- Read [Compatibility](../compatibility.md) for minimum versions, native binaries, and known platform limits.
+- Read [Security And Runtime Boundaries](../security.md) before shipping a production app.
 - If a platform has a setup file in the repository root, treat that as legacy during the transition to this docs layout.

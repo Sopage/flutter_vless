@@ -17,7 +17,7 @@ system proxy.
 ## Command
 
 ```sh
-cd /Users/auctor/Desktop/flutter_vless
+cd path/to/flutter_vless
 export DEVICE_ID="physical-device-id-from-flutter-devices"
 export VPN_MATRIX_TCP_REALITY_URL="vless://..."
 export VPN_MATRIX_XHTTP_REALITY_URL="vless://..."

@@ -2,6 +2,29 @@
 
 iOS uses a Network Extension packet tunnel path.
 
+## Quick Run The Example
+
+The bundled example already contains an `XrayTunnel` target. Use it first when
+you want to verify signing, App Groups, and Packet Tunnel behavior before
+copying setup into your own app.
+
+```bash
+cd example
+flutter pub get
+open ios/Runner.xcworkspace
+```
+
+In Xcode, select a real iPhone and set the same Apple Team on:
+
+- `Runner`
+- `XrayTunnel`
+
+Then run from Xcode. After signing is configured, CLI runs can also work:
+
+```bash
+flutter run -d <your-iphone-id>
+```
+
 ## What You Need
 
 - a real Apple Developer account and a signing-capable iPhone
@@ -31,11 +54,24 @@ The plugin appends `.XrayTunnel` internally for the tunnel extension.
 
 ## Suggested Setup Flow
 
-1. Add the package.
-2. Create the Packet Tunnel extension.
-3. Enable App Groups and Network Extensions.
-4. Pass the base bundle id and App Group from Dart.
-5. Test on a real device.
+1. Run the bundled example on a real iPhone.
+2. Add the package to your own app.
+3. Create a Packet Tunnel extension named `XrayTunnel`.
+4. Enable App Groups and Network Extensions on both targets.
+5. Pass the base bundle id and App Group from Dart.
+6. Test on a real device.
+
+## PacketTunnelProvider.swift
+
+Your tunnel target needs a `PacketTunnelProvider.swift`. The example has a
+working provider here:
+
+```text
+example/ios/XrayTunnel/PacketTunnelProvider.swift
+```
+
+Use the same target membership shape in your app: the provider file belongs to
+the `XrayTunnel` target, not the Flutter `Runner` target.
 
 ## Common Pitfalls
 

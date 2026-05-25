@@ -1,23 +1,24 @@
 name: flutter_vless
-description: Flutter plugin to run VLESS/VMESS as a local proxy and VPN on Android, iOS, macOS, and Windows. V2Ray/Xray core. Shadowsocks, Trojan, Socks 5 support.
+description: Xray/V2Ray Flutter plugin for VLESS, VMESS, Trojan, Shadowsocks, SOCKS, proxy-only, and VPN tunnel flows on Android, iOS, macOS, and Windows.
 
 version: 1.1.0
 homepage: https://github.com/XIIIFOX/flutter_vless/
+repository: https://github.com/XIIIFOX/flutter_vless
+issue_tracker: https://github.com/XIIIFOX/flutter_vless/issues
 documentation: https://github.com/XIIIFOX/flutter_vless/blob/main/doc/README.md
-tags:
-     - VLESS
-     - v2ray
-     - xray
-     - proxy
-     - vpn
-     - VMESS
 
 topics:
   - vpn
   - vless
   - v2ray
   - xray
-  - vmess
+  - proxy
+
+platforms:
+  android:
+  ios:
+  macos:
+  windows:
 
 environment:
   sdk: '>=3.4.0 <4.0.0'

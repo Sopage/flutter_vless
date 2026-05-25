@@ -7,7 +7,7 @@ Federated Flutter plugin for VLESS, VMESS, Trojan, Shadowsocks, and SOCKS on And
 This package exposes a small Dart API for parsing share links and subscriptions, generating Xray configs, and starting either proxy-only or VPN/tunnel mode through platform backends.
 
 The package is open source and free to use, with Android, iOS, macOS, and Windows support included out of the box. The longer guides live under `doc/`.
-For generated API docs, see the `documentation` link in `pubspec.yaml`.
+For long-form docs, see the `documentation` link in `pubspec.yaml`.
 
 ## At A Glance
 
@@ -17,7 +17,6 @@ For generated API docs, see the `documentation` link in `pubspec.yaml`.
 | iOS | VPN, proxy-only | Real device required for packet-tunnel testing. App Group and Network Extension are required. |
 | macOS | VPN, proxy-only | Packet Tunnel setup is required. See the macOS architecture notes for route and DNS details. |
 | Windows | VPN, proxy-only | Xray must be available locally. Admin rights may be required for tunnel mode. |
-| Web | Not supported | The plugin does not register a web implementation. |
 
 ## Key Capabilities
 
@@ -33,8 +32,29 @@ For generated API docs, see the `documentation` link in `pubspec.yaml`.
 
 1. New user setup: [Getting Started](doc/getting-started.md)
 2. Platform setup: [Platform Guides](doc/platform/README.md)
-3. Config formats and advanced editing: [Configuration Guide](doc/configuration.md)
-4. If something fails: [Troubleshooting](doc/troubleshooting.md)
+3. Public API contract: [API Contract](doc/api.md)
+4. Practical scenarios: [Examples](doc/examples.md)
+5. Config formats and advanced editing: [Configuration Guide](doc/configuration.md)
+6. Compatibility and limits: [Compatibility](doc/compatibility.md)
+7. Security and runtime boundaries: [Security](doc/security.md)
+8. If something fails: [Troubleshooting](doc/troubleshooting.md)
+
+## Try The Example First
+
+The example app is the quickest way to verify platform setup before copying the
+plugin into your own project.
+
+```bash
+cd example
+flutter pub get
+flutter run -d android
+flutter run -d ios
+flutter run -d macos
+flutter run -d windows
+```
+
+iOS needs a signed real device for VPN mode, macOS needs the Packet Tunnel
+setup, and Windows needs `example/windows/xray/xray.exe`.
 
 ## Installation
 
@@ -49,11 +69,10 @@ Then run:
 flutter pub get
 ```
 
-If you need the Android emulator binaries, add:
+If you need the Android emulator binaries, add the emulator package as well:
 
-```yaml
-dependencies:
-  flutter_vless_android_emulator: ^1.1.0
+```bash
+flutter pub add flutter_vless_android_emulator
 ```
 
 ## Quick Start
@@ -125,7 +144,8 @@ If you need to edit the runtime config, start with [Configuration Guide](doc/con
 
 The bundled example app shows clipboard import, routing edits, proxy-only mode, and status tracking:
 
-[example/lib/main.dart](example/lib/main.dart)
+- [example/README.md](example/README.md)
+- [example/lib/main.dart](example/lib/main.dart)
 
 ## Platform Setup
 
@@ -138,8 +158,13 @@ The bundled example app shows clipboard import, routing edits, proxy-only mode, 
 
 - [Docs index](doc/README.md)
 - [Getting Started](doc/getting-started.md)
+- [API Contract](doc/api.md)
+- [Examples](doc/examples.md)
 - [Configuration Guide](doc/configuration.md)
+- [Compatibility](doc/compatibility.md)
+- [Security](doc/security.md)
 - [Architecture Notes](doc/architecture.md)
+- [Real-Device VPN Matrix](doc/device_matrix.md)
 - [Troubleshooting](doc/troubleshooting.md)
 
 ## Contributing

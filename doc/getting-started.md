@@ -2,6 +2,28 @@
 
 This guide is for developers who want to add `flutter_vless` to an app and get a working connection with the smallest possible amount of setup.
 
+## Quick Run From The Example
+
+The fastest way to verify your environment is to run the bundled example app
+first, then copy the same setup shape into your project.
+
+```bash
+cd example
+flutter pub get
+```
+
+Then run the target you care about:
+
+```bash
+flutter run -d android
+flutter run -d ios
+flutter run -d macos
+flutter run -d windows
+```
+
+Platform caveats still apply: iOS needs a real signed device for VPN mode,
+macOS needs the Packet Tunnel setup, and Windows needs `xray.exe` in place.
+
 ## 1. Add The Dependency
 
 ```yaml
@@ -17,9 +39,8 @@ flutter pub get
 
 If you need Android emulator support, also add:
 
-```yaml
-dependencies:
-  flutter_vless_android_emulator: ^1.1.0
+```bash
+flutter pub add flutter_vless_android_emulator
 ```
 
 ## 2. Complete Platform Setup
@@ -30,6 +51,9 @@ Read the platform-specific guide that matches your target:
 - [iOS](platform/ios.md)
 - [macOS](platform/macos.md)
 - [Windows](platform/windows.md)
+
+For version requirements, native binaries, and known platform limits, read
+[Compatibility](compatibility.md).
 
 ## 3. Initialize The Plugin
 
@@ -91,3 +115,9 @@ await flutterVless.stopVless();
 3. Initialize the platform implementation.
 4. Start proxy-only mode or VPN/tunnel mode.
 5. Read status updates and delay metrics from the platform channel.
+
+Next reads:
+
+- [API Contract](api.md)
+- [Examples](examples.md)
+- [Security And Runtime Boundaries](security.md)

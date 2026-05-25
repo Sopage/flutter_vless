@@ -2,6 +2,22 @@
 
 Windows uses a local Xray-backed path with system routing and proxy behavior.
 
+## Quick Run The Example
+
+Place `xray.exe` in the example before running Windows:
+
+```text
+example/windows/xray/xray.exe
+```
+
+Then run:
+
+```bash
+cd example
+flutter pub get
+flutter run -d windows
+```
+
 ## What You Need
 
 - a recent Xray release available locally as `xray.exe`
@@ -11,6 +27,18 @@ Windows uses a local Xray-backed path with system routing and proxy behavior.
 ## Suggested Placement
 
 Keep `xray.exe` where the plugin can discover it from the app or example project.
+
+For the bundled example, the expected structure is:
+
+```text
+example/
+  windows/
+    xray/
+      xray.exe
+```
+
+For your own app, mirror that structure under your app's Windows directory or
+use one of the plugin's supported lookup locations.
 
 ## Runtime Notes
 

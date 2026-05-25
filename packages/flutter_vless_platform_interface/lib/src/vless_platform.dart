@@ -2,9 +2,13 @@ import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'vless_status.dart';
 import 'method_channel_vless_platform.dart';
 
-/// The interface that platform implementations must implement.
+/// Contract implemented by every federated `flutter_vless` platform package.
+///
+/// Application code normally talks to `FlutterVless` from the main package.
+/// Platform packages implement this interface to bridge Dart calls to Android,
+/// iOS, macOS, or Windows native Xray/proxy/tunnel backends.
 abstract class VlessPlatform extends PlatformInterface {
-  /// Constructs a VlessPlatform.
+  /// Creates a platform interface instance.
   VlessPlatform() : super(token: _token);
 
   static final Object _token = Object();
@@ -24,12 +28,12 @@ abstract class VlessPlatform extends PlatformInterface {
     _instance = instance;
   }
 
-  /// Requests VPN permission from the user (Android).
+  /// Requests the platform permission or profile state needed for tunnel mode.
   Future<bool> requestPermission() {
     throw UnimplementedError('requestPermission() has not been implemented.');
   }
 
-  /// Initializes the VPN plugin with platform-specific configuration.
+  /// Initializes platform channels and native configuration.
   Future<void> initializeVless({
     required void Function(VlessStatus status) onStatusChanged,
     required String notificationIconResourceType,
@@ -40,7 +44,7 @@ abstract class VlessPlatform extends PlatformInterface {
     throw UnimplementedError('initializeVless() has not been implemented.');
   }
 
-  /// Starts the VPN connection with the given configuration.
+  /// Starts a proxy-only or VPN/tunnel session with a JSON Xray config.
   Future<void> startVless({
     required String remark,
     required String config,
@@ -52,24 +56,24 @@ abstract class VlessPlatform extends PlatformInterface {
     throw UnimplementedError('startVless() has not been implemented.');
   }
 
-  /// Stops the VPN connection.
+  /// Stops the active proxy or VPN/tunnel session.
   Future<void> stopVless() {
     throw UnimplementedError('stopVless() has not been implemented.');
   }
 
-  /// Measures delay/ping for a server configuration (when not connected).
+  /// Measures delay for a provided Xray config.
   Future<int> getServerDelay({required String config, required String url}) {
     throw UnimplementedError('getServerDelay() has not been implemented.');
   }
 
-  /// Measures delay/ping for the currently connected server.
+  /// Measures delay through the currently active runtime.
   Future<int> getConnectedServerDelay(String url) {
     throw UnimplementedError(
       'getConnectedServerDelay() has not been implemented.',
     );
   }
 
-  /// Gets the version of the underlying core (Xray).
+  /// Returns the Xray core version reported by the platform backend.
   Future<String> getCoreVersion() {
     throw UnimplementedError(
       'getCoreVersion() has not been implemented.',
