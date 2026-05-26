@@ -1,0 +1,32 @@
+# Documentation Index
+
+This directory is the canonical local documentation set for `flutter_vless`.
+
+The package page on pub.dev is driven by the root `README.md`. These guides keep the longer setup, configuration, and troubleshooting material in one place without turning the pub.dev page into a wall of text.
+
+## Read This First
+
+1. [Getting Started](getting-started.md)
+2. [Platform Guides](platform/README.md)
+3. [API Contract](api.md)
+4. [Examples](examples.md)
+5. [Configuration Guide](configuration.md)
+6. [Compatibility](compatibility.md)
+7. [Security And Runtime Boundaries](security.md)
+8. [Architecture Notes](architecture.md)
+9. [Real-Device VPN Matrix](device_matrix.md)
+10. [Troubleshooting](troubleshooting.md)
+
+## Audience Split
+
+- New users should start with `getting-started.md`, `examples.md`, and their platform guide.
+- Integrators should read `api.md`, `configuration.md`, and `compatibility.md`.
+- Maintainers should read `architecture.md`, `security.md`, and the macOS packet tunnel note before changing native runtime behavior.
+- Release validation should use `device_matrix.md` when VPN/tunnel behavior changes.
+- Debugging issues should usually begin with `troubleshooting.md`.
+
+## Notes
+
+- Keep this directory as the source of truth for human-written docs.
+- Use `README.md` for the pub.dev-facing summary and quick start.
+- Treat older root-level setup files as legacy during the transition to this docs layout.

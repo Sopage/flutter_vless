@@ -1,0 +1,69 @@
+{
+  "object" : {
+    "artifacts" : [
+      {
+        "kind" : {
+          "xcframework" : {
+
+          }
+        },
+        "packageRef" : {
+          "identity" : "flutter_vless_macos",
+          "kind" : "root",
+          "location" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos",
+          "name" : "flutter_vless_macos"
+        },
+        "path" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/artifacts/flutter_vless_macos/XRay/XRay.xcframework",
+        "source" : {
+          "checksum" : "01c2dee70aad1565ce196682443462291fb35b2ff5639e15d8fef577c0093034",
+          "type" : "remote",
+          "url" : "https://github.com/XIIIFOX/flutter_vless/releases/download/xray-macos-v26.5.9/XRay.xcframework.zip"
+        },
+        "targetName" : "XRay"
+      },
+      {
+        "kind" : {
+          "xcframework" : {
+
+          }
+        },
+        "packageRef" : {
+          "identity" : "tun2sockskit",
+          "kind" : "remoteSourceControl",
+          "location" : "https://github.com/EbrahimTahernejad/Tun2SocksKit",
+          "name" : "Tun2SocksKit"
+        },
+        "path" : "/Users/auctor/Desktop/flutter_vless/packages/flutter_vless_macos/macos/flutter_vless_macos/.build/artifacts/tun2sockskit/HevSocks5Tunnel/HevSocks5Tunnel.xcframework",
+        "source" : {
+          "checksum" : "ef031fafb8969d085bd954940049c341de807310997f48430f7898c286897876",
+          "type" : "remote",
+          "url" : "https://github.com/EbrahimTahernejad/Tun2SocksKit/releases/download/4.11.0/HevSocks5Tunnel.xcframework.zip"
+        },
+        "targetName" : "HevSocks5Tunnel"
+      }
+    ],
+    "dependencies" : [
+      {
+        "basedOn" : null,
+        "packageRef" : {
+          "identity" : "tun2sockskit",
+          "kind" : "remoteSourceControl",
+          "location" : "https://github.com/EbrahimTahernejad/Tun2SocksKit",
+          "name" : "Tun2SocksKit"
+        },
+        "state" : {
+          "checkoutState" : {
+            "revision" : "04e607172ac03a728f74dc08e1f0a737cb0528d4",
+            "version" : "4.11.0"
+          },
+          "name" : "sourceControlCheckout"
+        },
+        "subpath" : "Tun2SocksKit"
+      }
+    ],
+    "prebuilts" : [
+
+    ]
+  },
+  "version" : 7
+}

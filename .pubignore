@@ -11,9 +11,13 @@ build/
 .packages
 .pub/
 .pub-cache/
+pubspec_overrides.yaml
+**/pubspec_overrides.yaml
 
 # example build outputs
 example/build/
+example/macos/Runner/xray/
+example/windows/xray/
 example/android/build/
 example/ios/Pods/
 example/ios/Flutter/Flutter.framework/
@@ -68,3 +72,5 @@ packages/
 # screenshots / big media (optional)
 screenshots/
 assets/images/big-*
+chrome_stdout.log
+tool/native_host/

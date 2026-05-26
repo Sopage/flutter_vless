@@ -4,9 +4,11 @@ import 'package:flutter_vless/url/vless.dart';
 
 import 'xray_config_test_utils.dart';
 
-const xhttpNoneLink = 'vless://';
+const xhttpNoneLink =
+    'vless://b94da146-a56e-49d7-af4c-a68c9065cbfd@:2043?type=xhttp&host=s3.storage.selcloud.ru&path=/my-bucket&mode=stream-up&security=none';
 
-const tcpRealityLink = 'vless://';
+const tcpRealityLink =
+    'vless://b94da146-a56e-49d7-af4c-a68c9065cbfd@:443?type=tcp&headerType=none&security=reality&fp=chrome&sni=vpnforppl.top&pbk=gOummriWvIYMJpd5oifBLqxsf_jcWHVsxVI7wnM0rRo&sid=117bee239f0f9c0b&flow=xtls-rprx-vision#%D0%A4%D0%B8%D0%BD%D0%BB%D1%8F%D0%BD%D0%B4%D0%B8%D1%8F%20%E2%9A%A1%EF%B8%8F';
 
 const visionSeedEncryption =
     'mlkem768x25519plus.native.1rtt.100-500-2000.75-0-100.80-0-5000.gtmOXB2AN_r905czmOIr6dKq_YDdEJB8RWGqfsXurns';

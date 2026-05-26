@@ -1,22 +1,26 @@
 name: flutter_vless
-description: Flutter plugin to run VLESS/VMESS as a local proxy and VPN on Android and iOS. V2Ray/Xray core. Shadowsocks, Trojan, Socks 5 support.
+description: Xray/V2Ray Flutter plugin for VLESS, VMESS, Trojan, Shadowsocks, SOCKS, proxy-only, and VPN tunnel flows on Android, iOS, macOS, and Windows.
 
-version: 1.0.5
-homepage: https://github.com/XIIIFOX/flutter_vless/
-tags:
-     - VLESS
-     - v2ray
-     - xray
-     - proxy
-     - vpn
-     - VMESS
+version: 1.1.0
+homepage: https://tfox.dev
+repository: https://github.com/XIIIFOX/flutter_vless
+issue_tracker: https://github.com/XIIIFOX/flutter_vless/issues
+documentation: https://github.com/XIIIFOX/flutter_vless/blob/main/doc/README.md
+funding:
+  - https://tfox.dev
 
 topics:
   - vpn
   - vless
   - v2ray
   - xray
-  - vmess
+  - proxy
+
+platforms:
+  android:
+  ios:
+  macos:
+  windows:
 
 environment:
   sdk: '>=3.4.0 <4.0.0'
@@ -25,8 +29,10 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  flutter_vless_platform_interface: ^1.0.0
-  flutter_vless_android: ^1.0.2
+  flutter_vless_platform_interface: ^1.1.0
+  flutter_vless_android: ^1.1.0
+  flutter_vless_macos: ^1.1.0
+  flutter_vless_windows: ^1.1.0
   yaml: ^3.1.2
 
 dev_dependencies:
@@ -34,15 +40,17 @@ dev_dependencies:
     sdk: flutter
   flutter_lints: ^6.0.0
 
-# For information on the generic Dart part of this file, see the
-# following page: https://dart.dev/tools/pub/pubspec
+executables:
+  setup_macos_vpn: setup_macos_vpn
 
-# The following section is specific to Flutter packages.
 flutter:
-
   plugin:
     platforms:
       android:
         default_package: flutter_vless_android
       ios:
         pluginClass: FlutterVlessPlugin
+      macos:
+        default_package: flutter_vless_macos
+      windows:
+        default_package: flutter_vless_windows

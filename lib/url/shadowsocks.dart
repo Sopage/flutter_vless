@@ -38,7 +38,7 @@ class ShadowSocksURL extends FlutterVlessURL {
         streamSecurity: uri.queryParameters['security'] ?? '',
         allowInsecure: allowInsecure,
         sni: uri.queryParameters["sni"] ?? sni,
-        fingerprint: streamSetting['tlsSettings']?['fingerprint'],
+        fingerprint: streamSettingsBuilder.tlsFingerprint,
         alpns: uri.queryParameters['alpn'],
         publicKey: null,
         shortId: null,
@@ -128,10 +128,9 @@ class ShadowSocksURL extends FlutterVlessURL {
   }
 
   @override
-  Map<String, dynamic> get outbound1 => {
-        "tag": "proxy",
-        "protocol": "shadowsocks",
-        "settings": {
+  Map<String, dynamic> get outbound1 => buildProxyOutbound(
+        protocol: "shadowsocks",
+        settings: {
           "vnext": null,
           "servers": [
             {
@@ -158,9 +157,5 @@ class ShadowSocksURL extends FlutterVlessURL {
           "secretKey": null,
           "peers": null
         },
-        "streamSettings": streamSetting,
-        "proxySettings": null,
-        "sendThrough": null,
-        "mux": {"enabled": false, "concurrency": 8}
-      };
+      );
 }

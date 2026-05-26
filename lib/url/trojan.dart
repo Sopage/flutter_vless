@@ -28,8 +28,7 @@ class TrojanURL extends FlutterVlessURL {
         streamSecurity: uri.queryParameters['security'] ?? 'tls',
         allowInsecure: allowInsecure,
         sni: uri.queryParameters["sni"] ?? sni,
-        fingerprint:
-            streamSetting['tlsSettings']?['fingerprint'] ?? "randomized",
+        fingerprint: streamSettingsBuilder.tlsFingerprint ?? "randomized",
         alpns: uri.queryParameters['alpn'],
         publicKey: null,
         shortId: null,
@@ -41,8 +40,7 @@ class TrojanURL extends FlutterVlessURL {
         streamSecurity: 'tls',
         allowInsecure: allowInsecure,
         sni: '',
-        fingerprint:
-            streamSetting['tlsSettings']?['fingerprint'] ?? "randomized",
+        fingerprint: streamSettingsBuilder.tlsFingerprint ?? "randomized",
         alpns: null,
         publicKey: null,
         shortId: null,
@@ -64,10 +62,9 @@ class TrojanURL extends FlutterVlessURL {
   late final Uri uri;
 
   @override
-  Map<String, dynamic> get outbound1 => {
-        "tag": "proxy",
-        "protocol": "trojan",
-        "settings": {
+  Map<String, dynamic> get outbound1 => buildProxyOutbound(
+        protocol: "trojan",
+        settings: {
           "vnext": null,
           "servers": [
             {
@@ -94,9 +91,5 @@ class TrojanURL extends FlutterVlessURL {
           "secretKey": null,
           "peers": null
         },
-        "streamSettings": streamSetting,
-        "proxySettings": null,
-        "sendThrough": null,
-        "mux": {"enabled": false, "concurrency": 8}
-      };
+      );
 }

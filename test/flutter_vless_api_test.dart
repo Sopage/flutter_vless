@@ -2,6 +2,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_vless/flutter_vless.dart';
 
+const validConfig = '{"outbounds":[{"protocol":"freedom"}]}';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -42,13 +44,32 @@ void main() {
     expect(calls, isEmpty);
   });
 
+  test('P0 startVless validates Xray config shape before native layer',
+      () async {
+    final plugin = FlutterVless(onStatusChanged: (_) {});
+
+    await expectLater(
+      plugin.startVless(remark: 'bad', config: '{"outbounds":[]}'),
+      throwsArgumentError,
+    );
+    await expectLater(
+      plugin.startVless(remark: 'bad', config: '{"outbounds":[{}]}'),
+      throwsArgumentError,
+    );
+    await expectLater(
+      plugin.startVless(remark: 'bad', config: '[]'),
+      throwsArgumentError,
+    );
+
+    expect(calls, isEmpty);
+  });
+
   test('P0 startVless forwards validated tunnel parameters', () async {
-    const config = '{"outbounds":[]}';
     final plugin = FlutterVless(onStatusChanged: (_) {});
 
     await plugin.startVless(
       remark: 'API wrapper',
-      config: config,
+      config: validConfig,
       blockedApps: ['com.blocked.app'],
       bypassSubnets: ['172.16.0.0/12'],
       proxyOnly: false,
@@ -59,7 +80,7 @@ void main() {
     expect(calls.single.method, 'startVless');
     expect(calls.single.arguments, {
       'remark': 'API wrapper',
-      'config': config,
+      'config': validConfig,
       'blocked_apps': ['com.blocked.app'],
       'bypass_subnets': ['172.16.0.0/12'],
       'proxy_only': false,
@@ -77,7 +98,7 @@ void main() {
     expect(calls, isEmpty);
 
     final delay = await plugin.getServerDelay(
-      config: '{"outbounds":[]}',
+      config: validConfig,
       url: 'https://example.com/generate_204',
     );
 
@@ -85,7 +106,7 @@ void main() {
     expect(calls, hasLength(1));
     expect(calls.single.method, 'getServerDelay');
     expect(calls.single.arguments, {
-      'config': '{"outbounds":[]}',
+      'config': validConfig,
       'url': 'https://example.com/generate_204',
     });
   });

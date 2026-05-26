@@ -1,3 +1,6 @@
+// Copyright (c) 2024-2026 13FOX Studio / tfox.dev.
+// SPDX-License-Identifier: MIT
+
 package com.github.tfox.flutter_vless
 
 import android.Manifest

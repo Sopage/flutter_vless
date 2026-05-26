@@ -51,8 +51,12 @@ dependency_overrides:
   # diagnostics and fixes are built from the same workspace source.
   flutter_vless_android:
     path: ../packages/flutter_vless_android
-  # flutter_vless_platform_interface:
-  #   path: ../packages/flutter_vless_platform_interface
+  flutter_vless_macos:
+    path: ../packages/flutter_vless_macos
+  flutter_vless_windows:
+    path: ../packages/flutter_vless_windows
+  flutter_vless_platform_interface:
+    path: ../packages/flutter_vless_platform_interface
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
 
