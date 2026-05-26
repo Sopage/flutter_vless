@@ -1,6 +1,6 @@
 Pod::Spec.new do |s|
   s.name             = 'flutter_vless_macos'
-  s.version          = '1.0.0'
+  s.version          = '1.1.0'
   s.summary          = 'macOS implementation of the flutter_vless plugin.'
   s.description      = <<-DESC
 macOS implementation of the flutter_vless plugin.
