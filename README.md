@@ -17,6 +17,7 @@ For long-form docs, see the `documentation` link in `pubspec.yaml`.
 - Official publisher: [pub.dev/publishers/tfox.dev](https://pub.dev/publishers/tfox.dev)
 - Official repository: [github.com/XIIIFOX/flutter_vless](https://github.com/XIIIFOX/flutter_vless)
 - Website: [tfox.dev](https://tfox.dev)
+- Listed in the official Xray-core README under Xray Wrapper: [XTLS/Xray-core](https://github.com/XTLS/Xray-core#others-that-support-vless-xtls-reality-xudp-plux)
 
 Redistributions and derived packages must preserve the copyright and MIT
 license notices required by the license. See [NOTICE](NOTICE) and
