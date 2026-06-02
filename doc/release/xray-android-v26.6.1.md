@@ -7,6 +7,7 @@ Changes:
 * Rebuilt `libxray.so` against XTLS/Xray-core `v26.6.1` for `arm64-v8a` and `armeabi-v7a`.
 * Kept 16KB page-size linker alignment for Android 15+ compatibility.
 * Kept emulator ABIs out of the main Android package.
+* Moved Android device runtime distribution to the Maven Central `dev.tfox.fluttervless:xray-android:26.6.1` AAR so Pub.dev receives a lightweight wrapper while Android apps still receive the same native libraries and geodata.
 
 Upstream:
 

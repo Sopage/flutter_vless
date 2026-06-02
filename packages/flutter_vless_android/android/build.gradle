@@ -16,6 +16,10 @@ buildscript {
 
 rootProject.allprojects {
     repositories {
+        def localRuntimeRepo = findProperty('flutterVlessAndroidRuntimeRepo') ?: System.getenv('FLUTTER_VLESS_ANDROID_RUNTIME_REPO')
+        if (localRuntimeRepo) {
+            maven { url uri(localRuntimeRepo) }
+        }
         google()
         mavenCentral()
     }
@@ -74,7 +78,8 @@ android {
     sourceSets {
         main {
             java.srcDirs += 'src/main/kotlin'
-            jniLibs.srcDirs = ['src/main/jniLibs']
+            jniLibs.srcDirs = []
+            assets.srcDirs = []
         }
     }
      packagingOptions {
@@ -92,4 +97,5 @@ dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.code.gson:gson:2.10.1'
+    implementation "dev.tfox.fluttervless:xray-android:${findProperty('flutterVlessXrayRuntimeVersion') ?: '26.6.1'}"
 }

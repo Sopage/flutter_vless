@@ -21,7 +21,7 @@ The package relies on native Xray artifacts.
 
 Platform notes:
 
-- Android packages native `libxray.so` libraries.
+- Android device runtimes are packaged in the Maven Central `dev.tfox.fluttervless:xray-android` AAR.
 - iOS and macOS use Xray framework artifacts through CocoaPods/Swift Package
   integration.
 - Windows expects a local `xray.exe`; the plugin does not download it at
@@ -96,4 +96,3 @@ For support flows, prefer redacting:
 - Provide a user-visible disconnect action.
 - Avoid silently importing unsupported protocols.
 - Document what traffic the app routes and when the local runtime is active.
-

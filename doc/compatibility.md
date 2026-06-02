@@ -22,7 +22,7 @@ represented as Xray config are skipped by the parser.
 
 | Platform | Supported modes | Minimum / validated version | Native requirement | Main limitations |
 | --- | --- | --- | --- | --- |
-| Android | VPN, proxy-only | `minSdk` 23, target SDK 35 in the Android package | Bundled `libxray.so`; `android:extractNativeLibs="true"` in the app manifest when required | Main package targets ARM device ABIs; emulator ABIs live in `flutter_vless_android_emulator`. |
+| Android | VPN, proxy-only | `minSdk` 23, target SDK 35 in the Android package | Xray runtime AAR from Maven Central; `android:extractNativeLibs="true"` in the app manifest when required | Main package targets ARM device ABIs; emulator ABIs live in `flutter_vless_android_emulator`. |
 | iOS | VPN, proxy-only | iOS 15.0+ | Network Extension, Packet Tunnel target, App Group, signed real device for tunnel validation | Simulator is not a reliable VPN/tunnel test target. |
 | macOS | VPN, proxy-only | macOS 13.0+ for the validated setup | Packet Tunnel extension, App Group, Swift Package products, setup command | Packet Tunnel routing and DNS changes must follow the architecture note. |
 | Windows | VPN/tunnel, proxy-only | Recent Flutter Windows toolchain | Local `xray.exe` available to the app | Tunnel/system routing may require elevated permissions; the plugin does not download Xray for you. |

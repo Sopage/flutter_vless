@@ -3,6 +3,7 @@
 * Updated bundled Android device `libxray.so` binaries to Xray-core `v26.6.1`.
 * Kept Android 15+ 16KB page-size linker alignment for the rebuilt ARM binaries.
 * Made emulator ABI builds opt-in so the device package keeps only ARM native libraries.
+* Moved Android device runtime binaries and geodata into the Maven `dev.tfox.fluttervless:xray-android:26.6.1` AAR dependency.
 
 ## 1.1.0
 

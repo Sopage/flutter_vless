@@ -110,7 +110,35 @@ LOAD           ... 0x4000
 ```
 If you see `0x1000`, it is **NOT** compatible with 16KB devices.
 
-## 5. Troubleshooting
+## 5. Package The Maven Runtime AAR
+
+The `flutter_vless_android` Pub.dev package consumes the Android device runtime through the Maven artifact:
+
+```text
+dev.tfox.fluttervless:xray-android:26.6.1
+```
+
+After rebuilding `libxray.so`, `libtun2socks.so`, or the geodata files, build the local Maven repository from the repository root:
+
+```bash
+tool/build_android_runtime_maven.sh
+```
+
+For local Android wrapper or example builds before Maven Central publication, pass the local repository path:
+
+```bash
+cd example/android
+./gradlew :app:assembleDebug \
+  -PflutterVlessAndroidRuntimeRepo="$PWD/../../android_runtime/xray_android/build/repo"
+```
+
+To upload the signed bundle to Maven Central, configure the Central Portal and signing environment variables documented in `android_runtime/xray_android/README.md`, then run:
+
+```bash
+tool/publish_android_runtime_maven.sh
+```
+
+## 6. Troubleshooting
 
 - **"bad file descriptor"**: This means the socket FD passing failed. Ensure `XrayVPNService.kt` is correctly sending the FD to the socket path specified in `-sock-path`.
 - **"permission denied"**: Ensure the app has permissions to write to the socket file in its private directory.

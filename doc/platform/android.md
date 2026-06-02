@@ -25,6 +25,7 @@ flutter pub add flutter_vless_android_emulator
 - Android project configured for the plugin
 - `minSdkVersion` of at least 23
 - `android:extractNativeLibs="true"` when required by your packaging setup
+- Maven Central access, which is normally already present in Flutter Android projects
 
 ## AndroidManifest.xml
 
@@ -73,6 +74,16 @@ If your app already uses Flutter's generated values, check what
 ## Emulator Support
 
 If you need x86_64 emulator support, add the separate `flutter_vless_android_emulator` package.
+
+## Runtime AAR
+
+The Android device runtime is delivered as a Maven Central AAR:
+
+```text
+dev.tfox.fluttervless:xray-android:26.6.1
+```
+
+The AAR contains the ARM `libxray.so` and `libtun2socks.so` files plus `geoip.dat` and `geosite.dat`. Keeping the runtime in Maven Central avoids Pub.dev archive limits while preserving the same files in the final Android app.
 
 ## Runtime Notes
 

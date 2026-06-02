@@ -46,12 +46,14 @@ jobs:
         with:
           channel: stable
           cache: true
+      - name: Build Android runtime local Maven repo
+        run: tool/build_android_runtime_maven.sh
       - name: Generate Flutter Android project files
         working-directory: example
         run: flutter pub get
       - name: Run plugin Kotlin unit tests
         working-directory: example/android
-        run: ./gradlew :flutter_vless_android:testDebugUnitTest --stacktrace
+        run: ./gradlew :flutter_vless_android:testDebugUnitTest --stacktrace -PflutterVlessAndroidRuntimeRepo="$GITHUB_WORKSPACE/android_runtime/xray_android/build/repo"
 
   ios:
     name: iOS Swift and Xcode build
