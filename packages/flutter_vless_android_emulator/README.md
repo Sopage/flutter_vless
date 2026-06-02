@@ -1,10 +1,10 @@
 # flutter_vless_android_emulator
 
-This package contains the x86_64 and x86 binaries for the `flutter_vless` plugin, which are required for running on most Android emulators.
+This package contains the x86_64 and x86 binaries for older `flutter_vless` Android release trains.
 
 ## Usage
 
-Add this package to your `pubspec.yaml` alongside `flutter_vless` if you need emulator support.
+Current `flutter_vless_android` releases use the main Maven Central runtime AAR for device and emulator ABIs, so new apps should not need this package. Keep it only for older versions that did not include x86/x86_64 in the main runtime AAR.
 
 ```yaml
 dependencies:

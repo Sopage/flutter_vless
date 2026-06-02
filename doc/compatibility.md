@@ -22,7 +22,7 @@ represented as Xray config are skipped by the parser.
 
 | Platform | Supported modes | Minimum / validated version | Native requirement | Main limitations |
 | --- | --- | --- | --- | --- |
-| Android | VPN, proxy-only | `minSdk` 23, target SDK 35 in the Android package | Xray runtime AAR from Maven Central; `android:extractNativeLibs="true"` in the app manifest when required | Main package targets ARM device ABIs; emulator ABIs live in `flutter_vless_android_emulator`. |
+| Android | VPN, proxy-only | `minSdk` 23, target SDK 35 in the Android package | Xray runtime AAR from Maven Central; Gradle `packaging.jniLibs.useLegacyPackaging = true` when extracted native executables are required | Main AAR includes device and emulator ABIs. |
 | iOS | VPN, proxy-only | iOS 15.0+ | Network Extension, Packet Tunnel target, App Group, signed real device for tunnel validation | Simulator is not a reliable VPN/tunnel test target. |
 | macOS | VPN, proxy-only | macOS 13.0+ for the validated setup | Packet Tunnel extension, App Group, Swift Package products, setup command | Packet Tunnel routing and DNS changes must follow the architecture note. |
 | Windows | VPN/tunnel, proxy-only | Recent Flutter Windows toolchain | Local `xray.exe` available to the app | Tunnel/system routing may require elevated permissions; the plugin does not download Xray for you. |
@@ -33,21 +33,19 @@ represented as Xray config are skipped by the parser.
 The Android implementation includes 16KB page size support for modern Android
 builds and bundles native Xray libraries for device ABIs.
 
-For emulator targets, add:
+The Android runtime AAR includes `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64`.
 
-```bash
-flutter pub add flutter_vless_android_emulator
-```
+Use the Android Gradle plugin packaging DSL when your app needs extracted native
+executables:
 
-The app manifest should place native library extraction on the `<application>`
-tag:
-
-```xml
-<application
-    android:name="${applicationName}"
-    android:extractNativeLibs="true">
-    ...
-</application>
+```kotlin
+android {
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+}
 ```
 
 ## Apple Platforms

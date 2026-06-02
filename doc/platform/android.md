@@ -13,46 +13,50 @@ flutter pub get
 flutter run -d android
 ```
 
-For an emulator, add the emulator package first:
-
-```bash
-flutter pub add flutter_vless_android_emulator
-```
+The Android runtime AAR includes both device and emulator ABIs, so the example
+can run on Android devices and emulators without an extra emulator package.
 
 ## What You Need
 
 - Flutter package dependency
 - Android project configured for the plugin
 - `minSdkVersion` of at least 23
-- `android:extractNativeLibs="true"` when required by your packaging setup
+- Gradle native-library extraction enabled when required by your packaging setup
 - Maven Central access, which is normally already present in Flutter Android projects
 
-## AndroidManifest.xml
+## Native Library Packaging
 
-Add `android:extractNativeLibs="true"` to the `<application>` tag in:
+Use the Android Gradle plugin packaging DSL instead of setting
+`android:extractNativeLibs` directly in `AndroidManifest.xml`.
 
-```text
-android/app/src/main/AndroidManifest.xml
+Kotlin DSL:
+
+```kotlin
+android {
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+}
 ```
 
-Example:
+Groovy DSL:
 
-```xml
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application
-        android:label="my_app"
-        android:name="${applicationName}"
-        android:extractNativeLibs="true"
-        android:icon="@mipmap/ic_launcher">
-        ...
-    </application>
-</manifest>
+```groovy
+android {
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+}
 ```
 
-The bundled example has the same setting in:
+The bundled example uses this setting in:
 
 ```text
-example/android/app/src/main/AndroidManifest.xml
+example/android/app/build.gradle.kts
 ```
 
 ## Gradle Settings
@@ -71,19 +75,19 @@ android {
 If your app already uses Flutter's generated values, check what
 `flutter.minSdkVersion` resolves to before relying on it.
 
-## Emulator Support
-
-If you need x86_64 emulator support, add the separate `flutter_vless_android_emulator` package.
-
 ## Runtime AAR
 
-The Android device runtime is delivered as a Maven Central AAR:
+The Android runtime is delivered as a Maven Central AAR:
 
 ```text
-dev.tfox.fluttervless:xray-android:26.6.1
+dev.tfox.fluttervless:xray-android:26.6.1.1
 ```
 
-The AAR contains the ARM `libxray.so` and `libtun2socks.so` files plus `geoip.dat` and `geosite.dat`. Keeping the runtime in Maven Central avoids Pub.dev archive limits while preserving the same files in the final Android app.
+The AAR contains `libxray.so` and `libtun2socks.so` for `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64`, plus `geoip.dat` and `geosite.dat`. Keeping the runtime in Maven Central avoids Pub.dev archive limits while preserving the same files in the final Android app.
+
+The `flutter_vless_android` Pub.dev package intentionally does not include raw `android/src/main/jniLibs` or geodata files. Runtime updates are made in `android_runtime/xray_android/src/main`, published to Maven Central first, and then consumed by the Android wrapper.
+
+For the strict runtime update and publishing checklist, see `doc/release/android-runtime-maven-central.md`.
 
 ## Runtime Notes
 
@@ -95,12 +99,12 @@ The AAR contains the ARM `libxray.so` and `libtun2socks.so` files plus `geoip.da
 
 1. Run the example on a device or emulator.
 2. Add the dependency to your own app.
-3. Add `android:extractNativeLibs="true"` to the application tag.
+3. Enable Gradle native-library extraction with `useLegacyPackaging = true` when your app packaging requires extracted native executables.
 4. Set `minSdk` to 23 or newer.
 5. Initialize the plugin and start proxy-only mode or VPN mode.
 
 ## Common Pitfalls
 
 - Using too low a `minSdkVersion`
-- Forgetting the native library extraction setting when needed
+- Forgetting the Gradle native-library extraction setting when needed
 - Copying iOS or macOS tunnel steps into an Android project

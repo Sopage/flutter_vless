@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT_DIR="$ROOT_DIR/android_runtime/xray_android"
 GRADLE_WRAPPER="${GRADLE_WRAPPER:-$ROOT_DIR/example/android/gradlew}"
-XRAY_RUNTIME_VERSION="${XRAY_RUNTIME_VERSION:-26.6.1}"
+XRAY_RUNTIME_VERSION="${XRAY_RUNTIME_VERSION:-26.6.1.1}"
 
 "$GRADLE_WRAPPER" \
   -p "$PROJECT_DIR" \
@@ -28,6 +28,10 @@ for entry in \
   "jni/arm64-v8a/libtun2socks.so" \
   "jni/armeabi-v7a/libxray.so" \
   "jni/armeabi-v7a/libtun2socks.so" \
+  "jni/x86/libxray.so" \
+  "jni/x86/libtun2socks.so" \
+  "jni/x86_64/libxray.so" \
+  "jni/x86_64/libtun2socks.so" \
   "assets/geoip.dat" \
   "assets/geosite.dat"; do
   if ! unzip -l "$AAR_PATH" "$entry" >/dev/null 2>&1; then

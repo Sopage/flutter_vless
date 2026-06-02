@@ -79,6 +79,33 @@ jobs:
       - name: Run plugin Kotlin unit tests
         working-directory: example/android
         run: ./gradlew :flutter_vless_android:testDebugUnitTest --stacktrace -PflutterVlessAndroidRuntimeRepo="$GITHUB_WORKSPACE/android_runtime/xray_android/build/repo"
+      - name: Verify Maven Central Android runtime resolution
+        run: tool/test_android_maven_runtime.sh
+
+  android-emulator:
+    name: Android emulator Xray runtime smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          script: |
+            cd example
+            flutter pub get
+            flutter test integration_test/android_xray_runtime_smoke_test.dart -d emulator-5554
 
   ios:
     name: iOS Swift and Xcode build

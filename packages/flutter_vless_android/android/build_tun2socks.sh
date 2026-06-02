@@ -1,12 +1,13 @@
 #!/bin/bash
+set -euo pipefail
 
 # Build script for tun2socks (Go version) with 16KB page size support
 # This is required for Android 15+ compatibility
 
 # Configuration
 TUN2SOCKS_REPO="https://github.com/xjasonlyu/tun2socks"
-TARGET_DIR="src/main/jniLibs"
-NDK_PATH="${ANDROID_NDK_HOME:-/Users/vladislav/Library/Android/sdk/ndk/27.0.12077973}"
+TARGET_DIR="${TARGET_DIR:-../../../android_runtime/xray_android/src/main/jniLibs}"
+NDK_PATH="${ANDROID_NDK_HOME:-$HOME/Library/Android/sdk/ndk/28.2.13676358}"
 
 # Check NDK
 if [ ! -d "$NDK_PATH" ]; then
@@ -17,11 +18,14 @@ fi
 
 echo "Using NDK at: $NDK_PATH"
 
-# MacOS NDK Toolchain path
-TOOLCHAIN="${NDK_PATH}/toolchains/llvm/prebuilt/darwin-x86_64"
+case "$(uname -s)" in
+    Darwin) TOOLCHAIN="${NDK_PATH}/toolchains/llvm/prebuilt/darwin-x86_64" ;;
+    Linux) TOOLCHAIN="${NDK_PATH}/toolchains/llvm/prebuilt/linux-x86_64" ;;
+    *) echo "Error: unsupported host OS $(uname -s)"; exit 1 ;;
+esac
 if [ ! -d "$TOOLCHAIN" ]; then
     echo "Error: NDK toolchain not found at $TOOLCHAIN"
-    echo "Are you on macOS? If not, please edit the script to match your OS."
+    echo "Please check ANDROID_NDK_HOME and host OS."
     exit 1
 fi
 
@@ -64,24 +68,20 @@ build_tun2socks() {
     
     # Build with 16KB page alignment - same flags as xray
     go build -v -trimpath -ldflags "-s -w -buildid= -linkmode=external -extldflags '-Wl,-z,max-page-size=16384'" -buildmode=pie -o "../${OUTPUT_DIR}/libtun2socks.so" .
-    
-    if [ $? -eq 0 ]; then
-        echo "✅ Success: ${OUTPUT_DIR}/libtun2socks.so created."
-        
-        # Verify 16KB alignment
-        if command -v ${TOOLCHAIN}/bin/llvm-readelf &> /dev/null; then
-            echo "Verifying 16KB alignment:"
-            ALIGN=$(${TOOLCHAIN}/bin/llvm-readelf -l "../${OUTPUT_DIR}/libtun2socks.so" | grep "LOAD" | head -1 | awk '{print $NF}')
-            if [ "$ALIGN" = "0x4000" ]; then
-                echo "✅ Alignment: $ALIGN (16KB) - CORRECT"
-            else
-                echo "⚠️  Alignment: $ALIGN - Expected 0x4000"
-            fi
+
+    echo "Success: ${OUTPUT_DIR}/libtun2socks.so created."
+
+    # Verify 16KB alignment
+    if [ -x "${TOOLCHAIN}/bin/llvm-readelf" ]; then
+        echo "Verifying 16KB alignment:"
+        ALIGN=$("${TOOLCHAIN}/bin/llvm-readelf" -l "../${OUTPUT_DIR}/libtun2socks.so" | grep "LOAD" | head -1 | awk '{print $NF}')
+        if [ "$ALIGN" = "0x4000" ]; then
+            echo "Alignment: $ALIGN (16KB) - correct"
+        else
+            echo "Warning: alignment is $ALIGN; expected 0x4000"
         fi
-    else
-        echo "❌ Failed to build for ${ARCH_NAME}"
     fi
-    
+
     cd ..
 }
 
@@ -89,16 +89,24 @@ build_tun2socks() {
 echo "Building tun2socks (Go version) with 16KB page size support..."
 
 # ARM64
-build_tun2socks "arm64-v8a" "arm64" "" "aarch64-linux-android21"
+if [ "${TUN2SOCKS_BUILD_ARM64:-1}" = "1" ]; then
+    build_tun2socks "arm64-v8a" "arm64" "" "aarch64-linux-android21"
+fi
 
 # ARMv7
-build_tun2socks "armeabi-v7a" "arm" "7" "armv7a-linux-androideabi21"
+if [ "${TUN2SOCKS_BUILD_ARMV7:-1}" = "1" ]; then
+    build_tun2socks "armeabi-v7a" "arm" "7" "armv7a-linux-androideabi21"
+fi
 
-# x86 (Disabled to save size - legacy 32-bit emulator)
-# build_tun2socks "x86" "386" "" "i686-linux-android21"
+# x86 is included in the main runtime AAR.
+if [ "${TUN2SOCKS_BUILD_X86:-1}" = "1" ]; then
+    build_tun2socks "x86" "386" "" "i686-linux-android21"
+fi
 
-# x86_64 (Modern 64-bit emulator)
-build_tun2socks "x86_64" "amd64" "" "x86_64-linux-android21"
+# x86_64 is included in the main runtime AAR.
+if [ "${TUN2SOCKS_BUILD_X86_64:-1}" = "1" ]; then
+    build_tun2socks "x86_64" "amd64" "" "x86_64-linux-android21"
+fi
 
 echo ""
 echo "========================================="
@@ -110,5 +118,5 @@ echo "Run this command to check all libraries:"
 echo ""
 echo "for arch in armeabi-v7a arm64-v8a x86 x86_64; do"
 echo "  echo \"=== \$arch ===\";"
-echo "  ${TOOLCHAIN}/bin/llvm-readelf -l src/main/jniLibs/\$arch/libtun2socks.so | grep LOAD | head -1;"
+echo "  ${TOOLCHAIN}/bin/llvm-readelf -l ${TARGET_DIR}/\$arch/libtun2socks.so | grep LOAD | head -1;"
 echo "done"

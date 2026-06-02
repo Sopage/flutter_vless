@@ -4,10 +4,12 @@ The Android implementation of the `flutter_vless` plugin.
 
 ## Runtime
 
-Android device runtime binaries and geodata are delivered through the Maven Central AAR dependency `dev.tfox.fluttervless:xray-android:26.6.1`. This keeps the Pub.dev package lightweight while preserving the same packaged Xray files in the final Android app.
+Android runtime binaries and geodata are delivered through the Maven Central AAR dependency `dev.tfox.fluttervless:xray-android:26.6.1.1`. This keeps the Pub.dev package lightweight while preserving the same packaged Xray files in the final Android app.
 
-## Emulator Support (x86_64)
+Do not add raw `android/src/main/jniLibs` or geodata files back to this package. Rebuild runtime files in `android_runtime/xray_android/src/main`, publish the Maven AAR, then publish this wrapper package.
 
-To reduce the package size, x86_64 binaries (required for most emulators) have been moved to a separate package: `flutter_vless_android_emulator`.
+## Emulator Support
 
-If you need to run your app on an x86_64 emulator, please add `flutter_vless_android_emulator` to your `pubspec.yaml` dependencies.
+The current Maven runtime AAR includes `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64`. New apps do not need the separate `flutter_vless_android_emulator` package.
+
+The `flutter_vless_android_emulator` package is kept only as a compatibility package for older release trains that did not include emulator ABIs in the main AAR.

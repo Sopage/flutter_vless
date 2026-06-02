@@ -1,7 +1,1 @@
 pubspec_overrides.yaml
-android/src/main/assets/geoip.dat
-android/src/main/assets/geosite.dat
-android/src/main/jniLibs/arm64-v8a/libxray.so
-android/src/main/jniLibs/arm64-v8a/libtun2socks.so
-android/src/main/jniLibs/armeabi-v7a/libxray.so
-android/src/main/jniLibs/armeabi-v7a/libtun2socks.so

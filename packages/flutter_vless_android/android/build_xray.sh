@@ -4,7 +4,7 @@ set -euo pipefail
 # Configuration
 XRAY_REPO="https://github.com/XTLS/Xray-core"
 XRAY_VERSION="${XRAY_VERSION:-v26.6.1}"
-TARGET_DIR="${TARGET_DIR:-src/main/jniLibs}"
+TARGET_DIR="${TARGET_DIR:-../../../android_runtime/xray_android/src/main/jniLibs}"
 NDK_PATH="${ANDROID_NDK_HOME:-$HOME/Library/Android/sdk/ndk/28.2.13676358}"
 
 # Check NDK
@@ -103,15 +103,13 @@ if [ "${XRAY_BUILD_ARMV7:-1}" = "1" ]; then
     build_xray "armeabi-v7a" "arm" "7" "armv7a-linux-androideabi21"
 fi
 
-# x86 is disabled by default; enable for the emulator package:
-# XRAY_BUILD_X86=1 ./build_xray.sh
-if [ "${XRAY_BUILD_X86:-0}" = "1" ]; then
+# x86 is included in the main runtime AAR.
+if [ "${XRAY_BUILD_X86:-1}" = "1" ]; then
     build_xray "x86" "386" "" "i686-linux-android21"
 fi
 
-# x86_64 is disabled by default; enable for the emulator package:
-# XRAY_BUILD_X86_64=1 ./build_xray.sh
-if [ "${XRAY_BUILD_X86_64:-0}" = "1" ]; then
+# x86_64 is included in the main runtime AAR.
+if [ "${XRAY_BUILD_X86_64:-1}" = "1" ]; then
     build_xray "x86_64" "amd64" "" "x86_64-linux-android21"
 fi
 

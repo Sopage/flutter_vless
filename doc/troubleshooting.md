@@ -51,9 +51,9 @@ Check:
 
 ## Android Specific
 
-- confirm `android:extractNativeLibs="true"` is set when required
+- confirm Gradle `packaging.jniLibs.useLegacyPackaging = true` is set when extracted native executables are required
 - confirm `minSdkVersion` is high enough
-- if you use an emulator, add the separate emulator package
+- confirm the app resolves the current Maven runtime AAR, which includes emulator ABIs
 - confirm `blockedApps` is only used where the platform backend supports it
 
 ## iOS And macOS Specific

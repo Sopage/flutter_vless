@@ -2,6 +2,8 @@
 
 This guide explains how to build the native libraries (`libxray.so` and `libtun2socks.so`) for the Flutter Vless plugin.
 
+Android runtime files are stored in `android_runtime/xray_android/src/main` and published as the Maven Central AAR `dev.tfox.fluttervless:xray-android`. They are not stored in the `flutter_vless_android` Pub.dev package.
+
 **Key Features:**
 - ✅ **Android 15+ Support**: Builds with 16KB page size alignment.
 - ✅ **Socket FD Passing**: `tun2socks` is patched to receive the TUN file descriptor via a Unix socket (bypassing Android process restrictions).
@@ -23,21 +25,12 @@ export ANDROID_NDK_HOME="$HOME/Library/Android/sdk/ndk/27.0.12077973"
 
 ## 2. Build Xray (`libxray.so`)
 
-This script builds the Xray core for Android device architectures (`arm64-v8a`, `armeabi-v7a`) by default.
+This script builds the Xray core for Android device and emulator architectures (`arm64-v8a`, `armeabi-v7a`, `x86`, `x86_64`) by default and writes them to the Maven runtime module.
 
 ```bash
 cd android
 chmod +x build_xray.sh
 ./build_xray.sh
-```
-
-To build emulator binaries for the separate `flutter_vless_android_emulator` package:
-
-```bash
-cd packages/flutter_vless_android/android
-XRAY_BUILD_ARM64=0 XRAY_BUILD_ARMV7=0 XRAY_BUILD_X86=1 XRAY_BUILD_X86_64=1 \
-  TARGET_DIR="../../flutter_vless_android_emulator/android/src/main/jniLibs" \
-  ./build_xray.sh
 ```
 
 ## 3. Build Tun2socks (`libtun2socks.so`)
@@ -50,58 +43,13 @@ chmod +x build_tun2socks.sh
 ./build_tun2socks.sh
 ```
 
-> **Note:** If `build_tun2socks.sh` is missing, create it with the following content:
-
-<details>
-<summary>Click to show build_tun2socks.sh content</summary>
-
-```bash
-#!/bin/bash
-# Build script for tun2socks (Go version) with 16KB page size support
-
-TUN2SOCKS_REPO="https://github.com/xjasonlyu/tun2socks"
-TARGET_DIR="src/main/jniLibs"
-NDK_PATH="${ANDROID_NDK_HOME:-/Users/vladislav/Library/Android/sdk/ndk/27.0.12077973}"
-TOOLCHAIN="${NDK_PATH}/toolchains/llvm/prebuilt/darwin-x86_64"
-
-if [ ! -d "tun2socks-go" ]; then
-    git clone "$TUN2SOCKS_REPO" tun2socks-go
-fi
-
-build_tun2socks() {
-    local ARCH_NAME=$1
-    local GO_ARCH=$2
-    local GO_ARM=$3
-    local ANDROID_TARGET=$4
-    local OUTPUT_DIR="${TARGET_DIR}/${ARCH_NAME}"
-    
-    mkdir -p "$OUTPUT_DIR"
-    export CGO_ENABLED=1
-    export GOOS=android
-    export GOARCH=$GO_ARCH
-    export GOARM=$GO_ARM
-    export CC="${TOOLCHAIN}/bin/${ANDROID_TARGET}-clang"
-    
-    cd tun2socks-go
-    # Build with 16KB page alignment
-    go build -v -trimpath -ldflags "-s -w -buildid= -linkmode=external -extldflags '-Wl,-z,max-page-size=16384'" -buildmode=pie -o "../${OUTPUT_DIR}/libtun2socks.so" .
-    cd ..
-}
-
-build_tun2socks "arm64-v8a" "arm64" "" "aarch64-linux-android21"
-build_tun2socks "armeabi-v7a" "arm" "7" "armv7a-linux-androideabi21"
-build_tun2socks "x86" "386" "" "i686-linux-android21"
-build_tun2socks "x86_64" "amd64" "" "x86_64-linux-android21"
-```
-</details>
-
 ## 4. Verification (16KB Page Size)
 
 To confirm that the libraries are compatible with Android 15+ (16KB page size), check the `LOAD` segment alignment using `llvm-readelf`.
 
 ```bash
 # Check alignment (should be 0x4000)
-$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-readelf -l src/main/jniLibs/arm64-v8a/libtun2socks.so | grep LOAD | head -1
+$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-readelf -l ../../../android_runtime/xray_android/src/main/jniLibs/arm64-v8a/libtun2socks.so | grep LOAD | head -1
 ```
 
 **Expected Output:**
@@ -115,10 +63,10 @@ If you see `0x1000`, it is **NOT** compatible with 16KB devices.
 The `flutter_vless_android` Pub.dev package consumes the Android device runtime through the Maven artifact:
 
 ```text
-dev.tfox.fluttervless:xray-android:26.6.1
+dev.tfox.fluttervless:xray-android:26.6.1.1
 ```
 
-After rebuilding `libxray.so`, `libtun2socks.so`, or the geodata files, build the local Maven repository from the repository root:
+After rebuilding `libxray.so`, `libtun2socks.so`, or the geodata files in `android_runtime/xray_android/src/main`, build the local Maven repository from the repository root:
 
 ```bash
 tool/build_android_runtime_maven.sh

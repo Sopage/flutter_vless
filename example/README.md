@@ -26,17 +26,17 @@ flutter pub get
 flutter run -d android
 ```
 
-For Android emulators, the example depends on the local
-`flutter_vless_android_emulator` package so x86/x86_64 binaries are available.
+For Android emulators, the main Maven runtime AAR already provides x86/x86_64
+binaries.
 
-The manifest already contains:
+The app Gradle file enables extracted native executables for the Xray runtime:
 
 ```xml
 <application
     android:extractNativeLibs="true">
     ...
 </application>
-```
+
 
 ## iOS
 
@@ -111,4 +111,3 @@ The Windows backend does not download Xray automatically.
 - Watch `state`, `connectionState`, upload, and download counters after
   startup.
 - Stop the session from the app before closing the example during testing.
-

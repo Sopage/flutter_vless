@@ -37,11 +37,7 @@ Then run:
 flutter pub get
 ```
 
-If you need Android emulator support, also add:
-
-```bash
-flutter pub add flutter_vless_android_emulator
-```
+Android emulator support is included through the main Android runtime AAR.
 
 ## 2. Complete Platform Setup
 

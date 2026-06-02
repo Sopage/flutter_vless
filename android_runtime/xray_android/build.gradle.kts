@@ -5,14 +5,18 @@ plugins {
 }
 
 group = "dev.tfox.fluttervless"
-version = providers.gradleProperty("xrayRuntimeVersion").orElse("26.6.1").get()
+version = providers.gradleProperty("xrayRuntimeVersion").orElse("26.6.1.1").get()
 
-val runtimeSourceDir = layout.projectDirectory.dir("../../packages/flutter_vless_android/android/src/main")
+val runtimeSourceDir = layout.projectDirectory.dir("src/main")
 val requiredRuntimeFiles = listOf(
     "jniLibs/arm64-v8a/libxray.so",
     "jniLibs/arm64-v8a/libtun2socks.so",
     "jniLibs/armeabi-v7a/libxray.so",
     "jniLibs/armeabi-v7a/libtun2socks.so",
+    "jniLibs/x86/libxray.so",
+    "jniLibs/x86/libtun2socks.so",
+    "jniLibs/x86_64/libxray.so",
+    "jniLibs/x86_64/libtun2socks.so",
     "assets/geoip.dat",
     "assets/geosite.dat",
 )
