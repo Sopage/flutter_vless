@@ -14,6 +14,9 @@ XRAY_RUNTIME_VERSION="${XRAY_RUNTIME_VERSION:-26.6.1}"
 REPO_DIR="$PROJECT_DIR/build/repo"
 AAR_PATH="$REPO_DIR/dev/tfox/fluttervless/xray-android/$XRAY_RUNTIME_VERSION/xray-android-$XRAY_RUNTIME_VERSION.aar"
 BUNDLE_PATH="$PROJECT_DIR/build/xray-android-$XRAY_RUNTIME_VERSION-central-bundle.zip"
+CENTRAL_STAGING_DIR="$PROJECT_DIR/build/central-staging"
+ARTIFACT_REPO_PATH="dev/tfox/fluttervless/xray-android"
+VERSION_REPO_DIR="$REPO_DIR/$ARTIFACT_REPO_PATH/$XRAY_RUNTIME_VERSION"
 
 if [ ! -f "$AAR_PATH" ]; then
   echo "AAR was not created at $AAR_PATH" >&2
@@ -57,8 +60,12 @@ done < <(find "$REPO_DIR" -type f ! -name '*.md5' ! -name '*.sha1' -print0)
 find "$REPO_DIR" -type f -name 'maven-metadata.xml*' -delete
 
 rm -f "$BUNDLE_PATH"
-(cd "$REPO_DIR" && find . -type f -print | LC_ALL=C sort | zip -q "$BUNDLE_PATH" -@)
+rm -rf "$CENTRAL_STAGING_DIR"
+mkdir -p "$CENTRAL_STAGING_DIR/$ARTIFACT_REPO_PATH"
+cp -R "$VERSION_REPO_DIR" "$CENTRAL_STAGING_DIR/$ARTIFACT_REPO_PATH/"
+(cd "$CENTRAL_STAGING_DIR" && find dev -type f -print | LC_ALL=C sort | zip -q "$BUNDLE_PATH" -@)
 
 echo "Android runtime AAR: $AAR_PATH"
 echo "Local Maven repo: $REPO_DIR"
 echo "Central bundle: $BUNDLE_PATH"
+unzip -l "$BUNDLE_PATH"
