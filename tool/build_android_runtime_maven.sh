@@ -53,6 +53,7 @@ checksum_sha1() {
 }
 
 find "$REPO_DIR" -type f -name 'maven-metadata.xml*' -delete
+find "$REPO_DIR" -type f -name '*.module*' -delete
 
 while IFS= read -r -d '' artifact; do
   checksum_md5 "$artifact" > "$artifact.md5"
