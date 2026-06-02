@@ -39,8 +39,8 @@ let package = Package(
         ),
         .binaryTarget(
             name: "XRay",
-            url: "https://github.com/XIIIFOX/flutter_vless/releases/download/xray-ios-v26.5.9/XRay.xcframework.zip",
-            checksum: "e802245c92f8a2991a79a059385b8cea6b3569bf9ecac67b2504c14c4eb595dd"
+            url: "https://github.com/XIIIFOX/flutter_vless/releases/download/xray-ios-v26.6.1/XRay.xcframework.zip",
+            checksum: "13b512b31b394a701de95d1ea9ae7a8aad091d5b8d8db6d2e042374015254217"
         ),
         .testTarget(
             name: "flutter_vless_tunnel_supportTests",

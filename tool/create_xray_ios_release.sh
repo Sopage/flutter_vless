@@ -4,10 +4,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-XRAY_VERSION="${XRAY_VERSION:-v26.5.9}"
+XRAY_VERSION="${XRAY_VERSION:-v26.6.1}"
 RELEASE_TAG="${RELEASE_TAG:-xray-ios-$XRAY_VERSION}"
 XCFRAMEWORK_PATH="${XCFRAMEWORK_PATH:-$REPO_ROOT/ios/XRay.xcframework}"
 OUTPUT_DIR="${OUTPUT_DIR:-$REPO_ROOT/build/xray-ios-release}"
+NOTES_FILE="${NOTES_FILE:-$REPO_ROOT/doc/release/$RELEASE_TAG.md}"
 ARCHIVE_PATH="$OUTPUT_DIR/XRay.xcframework.zip"
 
 if [ ! -d "$XCFRAMEWORK_PATH" ]; then
@@ -32,15 +33,20 @@ Created:  $ARCHIVE_PATH
 Size:     $ARCHIVE_SIZE
 Tag:      $RELEASE_TAG
 Checksum: $CHECKSUM
+Notes:    $NOTES_FILE
 
 1. Create or update this GitHub release:
 
    gh release create "$RELEASE_TAG" "$ARCHIVE_PATH" \\
      --repo XIIIFOX/flutter_vless \\
      --title "XRay iOS $XRAY_VERSION" \\
-     --notes "Prebuilt XRay.xcframework for flutter_vless iOS SwiftPM/CocoaPods integration."
+     --notes-file "$NOTES_FILE"
 
    If the release already exists:
+
+   gh release edit "$RELEASE_TAG" \\
+     --repo XIIIFOX/flutter_vless \\
+     --notes-file "$NOTES_FILE"
 
    gh release upload "$RELEASE_TAG" "$ARCHIVE_PATH" \\
      --repo XIIIFOX/flutter_vless \\
