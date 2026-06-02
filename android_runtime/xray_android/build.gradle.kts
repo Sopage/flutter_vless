@@ -61,6 +61,7 @@ afterEvaluate {
         publications {
             create<MavenPublication>("release") {
                 from(components["release"])
+                artifactId = "xray-android"
 
                 pom {
                     name.set("flutter_vless Xray Android Runtime")

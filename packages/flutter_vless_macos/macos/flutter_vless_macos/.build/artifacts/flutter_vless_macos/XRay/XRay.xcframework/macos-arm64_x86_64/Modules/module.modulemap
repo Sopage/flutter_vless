@@ -1,6 +1,0 @@
-module XRay {
-    header "ref.h"
-    header "XRay.objc.h"
-    header "Universe.objc.h"
-    export *
-}

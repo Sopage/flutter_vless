@@ -1,3 +1,4 @@
 pubspec_overrides.yaml
 macos/XRay.xcframework.zip
 macos/build_xray_macos/
+macos/flutter_vless_macos/.build/

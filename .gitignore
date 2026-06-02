@@ -30,6 +30,7 @@ pubspec_overrides.yaml
 .dart_tool/
 .packages
 build/
+**/.build/
 
 ### macOS ###
 # General
