@@ -8,7 +8,7 @@ tunnel, Xray config normalization, DNS handling, route exclusions, or debug
 health checks.
 
 The current working model was validated with VLESS/XHTTP-style configs on macOS
-using Xray core `26.5.9`, a Packet Tunnel Network Extension, and HEV
+using Xray core `26.6.1`, a Packet Tunnel Network Extension, and HEV
 tun2socks. The important final evidence was:
 
 - `Server TCP route health check: ok <server-ip>:443`

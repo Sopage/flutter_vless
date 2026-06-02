@@ -74,7 +74,7 @@ setup, and Windows needs `example/windows/xray/xray.exe`.
 
 ```yaml
 dependencies:
-  flutter_vless: ^1.1.0
+  flutter_vless: ^1.1.1
 ```
 
 Then run:

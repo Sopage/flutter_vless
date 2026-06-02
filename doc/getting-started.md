@@ -28,7 +28,7 @@ macOS needs the Packet Tunnel setup, and Windows needs `xray.exe` in place.
 
 ```yaml
 dependencies:
-  flutter_vless: ^1.1.0
+  flutter_vless: ^1.1.1
 ```
 
 Then run:

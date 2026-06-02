@@ -1,3 +1,9 @@
+## 1.1.1
+
+* Updated the iOS XRay core target to upstream `v26.6.1`.
+* Updated the default iOS SwiftPM/CocoaPods release tag to `xray-ios-v26.6.1`.
+* Updated Android and macOS platform package constraints to the `1.1.1` release train.
+
 ## 1.1.0
 
 **Major Release: Desktop Support (macOS & Windows)**
