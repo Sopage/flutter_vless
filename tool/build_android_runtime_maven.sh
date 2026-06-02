@@ -52,12 +52,12 @@ checksum_sha1() {
   fi
 }
 
+find "$REPO_DIR" -type f -name 'maven-metadata.xml*' -delete
+
 while IFS= read -r -d '' artifact; do
   checksum_md5 "$artifact" > "$artifact.md5"
   checksum_sha1 "$artifact" > "$artifact.sha1"
-done < <(find "$REPO_DIR" -type f ! -name '*.md5' ! -name '*.sha1' -print0)
-
-find "$REPO_DIR" -type f -name 'maven-metadata.xml*' -delete
+done < <(find "$REPO_DIR" -type f ! -name '*.md5' ! -name '*.sha1' ! -name '*.sha256' ! -name '*.sha512' -print0)
 
 rm -f "$BUNDLE_PATH"
 rm -rf "$CENTRAL_STAGING_DIR"
