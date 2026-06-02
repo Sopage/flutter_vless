@@ -17,6 +17,19 @@ jobs:
         with:
           channel: stable
           cache: true
+      - name: Use local federated package overrides
+        run: |
+          cat > pubspec_overrides.yaml <<'YAML'
+          dependency_overrides:
+            flutter_vless_platform_interface:
+              path: packages/flutter_vless_platform_interface
+            flutter_vless_android:
+              path: packages/flutter_vless_android
+            flutter_vless_macos:
+              path: packages/flutter_vless_macos
+            flutter_vless_windows:
+              path: packages/flutter_vless_windows
+          YAML
       - name: Install root dependencies
         run: flutter pub get
       - name: Analyze root package
@@ -67,6 +80,19 @@ jobs:
         with:
           channel: stable
           cache: true
+      - name: Use local federated package overrides
+        run: |
+          cat > pubspec_overrides.yaml <<'YAML'
+          dependency_overrides:
+            flutter_vless_platform_interface:
+              path: packages/flutter_vless_platform_interface
+            flutter_vless_android:
+              path: packages/flutter_vless_android
+            flutter_vless_macos:
+              path: packages/flutter_vless_macos
+            flutter_vless_windows:
+              path: packages/flutter_vless_windows
+          YAML
       - name: Install root dependencies
         run: flutter pub get
       - name: Test PacketTunnel Swift helper
