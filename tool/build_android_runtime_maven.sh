@@ -54,8 +54,10 @@ while IFS= read -r -d '' artifact; do
   checksum_sha1 "$artifact" > "$artifact.sha1"
 done < <(find "$REPO_DIR" -type f ! -name '*.md5' ! -name '*.sha1' -print0)
 
+find "$REPO_DIR" -type f -name 'maven-metadata.xml*' -delete
+
 rm -f "$BUNDLE_PATH"
-(cd "$REPO_DIR" && zip -qr "$BUNDLE_PATH" .)
+(cd "$REPO_DIR" && find . -type f -print | LC_ALL=C sort | zip -q "$BUNDLE_PATH" -@)
 
 echo "Android runtime AAR: $AAR_PATH"
 echo "Local Maven repo: $REPO_DIR"
