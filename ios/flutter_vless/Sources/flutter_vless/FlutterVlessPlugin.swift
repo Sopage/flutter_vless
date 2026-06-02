@@ -282,6 +282,7 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
     public func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
         pluginLog.info("Status stream attached")
         self.eventSink = events
+        emitStatus(duration: currentDurationSeconds(), state: currentRuntimeState(), reason: "stream-attached")
         return nil
     }
 
@@ -293,31 +294,54 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
 
     /// Polls traffic counters and periodically mirrors provider diagnostics.
     ///
-    /// The packet tunnel lives in a separate extension process, so a normal
-    /// Xcode run of the Flutter app can claim "CONNECTED" while hiding the
-    /// reason a browser page is stuck. Emitting the provider snapshot every few
-    /// seconds keeps real-device evidence in the Runner console.
-    private func startTimer() {
-        pluginLog.info("Starting traffic polling timer")
+    /// The packet tunnel lives in a separate extension process. Emitting the
+    /// provider snapshot every few seconds keeps real-device evidence in the
+    /// Runner console while the public status follows the real NEVPN state.
+    private func startTimer(reason: String = "unspecified") {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in
+                self?.startTimer(reason: reason)
+            }
+            return
+        }
+
+        if self.timer != nil {
+            emitStatus(duration: currentDurationSeconds(), state: currentRuntimeState(), reason: "timer-already-running:\(reason)")
+            return
+        }
+
+        pluginLog.info("Starting traffic polling timer reason=\(reason, privacy: .public)")
         self.timer?.invalidate()
-        self.timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true, block: { _ in
+        emitStatus(duration: currentDurationSeconds(), state: currentRuntimeState(), reason: "timer-start:\(reason)")
+        let timer = Timer(timeInterval: 1, repeats: true, block: { [weak self] _ in
+            guard let self else { return }
             if self.proxyOnlyRunner.isRunning {
                 let elapsed = Date().timeIntervalSince(self.proxyOnlyRunner.connectedDate ?? Date())
                 let seconds = Int(elapsed)
-                self.eventSink?(["\(seconds)", "0", "0", "0", "0", "CONNECTED"])
+                self.emitStatus(duration: seconds, state: "CONNECTED", reason: "timer-proxy")
+                return
+            }
+
+            let state = self.currentRuntimeState()
+            if state == "DISCONNECTED" || state == "UNKNOWN" {
+                self.stopTimer(reason: "vpn-state-\(state)")
                 return
             }
 
             let elapsed = Date().timeIntervalSince(self.packetTunnelManager?.connectedDate ?? Date())
             let seconds = Int(elapsed)
-            self.eventSink?(["\(seconds)", "\(self.uploadSpeed)", "\(self.downloadSpeed)", "\(self.totalUpload)", "\(self.totalDownload)", "CONNECTED"])
+            self.emitStatus(duration: seconds, state: state, reason: "timer-vpn")
+            guard state == "CONNECTED" else {
+                return
+            }
+
             Task{
                 do{
                     let response =  try await self.packetTunnelManager?.sendProviderMessage(data: "xray_traffic".data(using: .utf8)!)
                     if response != nil{
                         let traffic = String(decoding: response!, as: UTF8.self)
                         let parts = traffic.split(separator: ",")
-                        if let up = Int(parts[0]), let down = Int(parts[1]) {
+                        if parts.count >= 2, let up = Int(parts[0]), let down = Int(parts[1]) {
                             self.uploadSpeed = up - self.totalUpload
                             self.downloadSpeed = down - self.totalDownload
                             self.totalUpload = up
@@ -334,18 +358,63 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
                 }
             }
         })
+        self.timer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
-    private func stopTimer() {
-        pluginLog.info("Stopping traffic polling timer")
+    private func stopTimer(reason: String = "unspecified") {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in
+                self?.stopTimer(reason: reason)
+            }
+            return
+        }
+
+        pluginLog.info("Stopping traffic polling timer reason=\(reason, privacy: .public)")
         self.timer?.invalidate()
         self.timer = nil
-        self.eventSink?(["0", "0", "0", "0", "0", "DISCONNECTED"])
+        emitStatus(duration: 0, state: "DISCONNECTED", reason: "timer-stop:\(reason)")
         self.uploadSpeed = 0
         self.downloadSpeed = 0
         self.totalUpload = 0
         self.totalDownload = 0
         self.lastProviderDebugLogDate = .distantPast
+    }
+
+    private func currentDurationSeconds() -> Int {
+        if proxyOnlyRunner.isRunning {
+            return Int(Date().timeIntervalSince(proxyOnlyRunner.connectedDate ?? Date()))
+        }
+        return Int(Date().timeIntervalSince(packetTunnelManager?.connectedDate ?? Date()))
+    }
+
+    private func currentRuntimeState() -> String {
+        if proxyOnlyRunner.isRunning {
+            return "CONNECTED"
+        }
+        guard let status = packetTunnelManager?.status else {
+            return "DISCONNECTED"
+        }
+        switch status {
+        case .invalid, .disconnected:
+            return "DISCONNECTED"
+        case .connecting:
+            return "CONNECTING"
+        case .connected, .reasserting:
+            return "CONNECTED"
+        case .disconnecting:
+            return "DISCONNECTING"
+        @unknown default:
+            return "UNKNOWN"
+        }
+    }
+
+    private func emitStatus(duration: Int, state: String, reason: String) {
+        let payload = ["\(duration)", "\(uploadSpeed)", "\(downloadSpeed)", "\(totalUpload)", "\(totalDownload)", state]
+        if state != "CONNECTED" || Date().timeIntervalSince(lastTrafficLogDate) >= 5 {
+            pluginLog.info("Status event reason=\(reason, privacy: .public) payload=\(payload.joined(separator: ","), privacy: .public) vpnStatus=\(self.packetTunnelManager?.status?.rawValue ?? -1, privacy: .public)")
+        }
+        eventSink?(payload)
     }
 
     /// Sends a lightweight debug request to the NetworkExtension provider.
@@ -402,7 +471,7 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         pluginLog.info("stopVless requested")
         proxyOnlyRunner.stop()
         packetTunnelManager?.stop()
-        stopTimer()
+        stopTimer(reason: "stopVless")
         result(nil)
     }
 
@@ -475,7 +544,7 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
             do {
                 try proxyOnlyRunner.start(configData: configData)
                 pluginLog.info("Proxy-only start requested successfully remark=\(remark, privacy: .public)")
-                startTimer()
+                startTimer(reason: "proxy-only-started")
                 result(nil)
             } catch {
                 pluginLog.error("Failed to start proxy-only mode: \(error.localizedDescription, privacy: .public)")
@@ -498,6 +567,7 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
                 try await packetTunnelManager?.saveToPreferences()
                 try await packetTunnelManager?.start()
                 pluginLog.info("VPN start requested successfully")
+                self.startTimer(reason: "startVless-success")
                 result(nil)
                 return
             } catch {
@@ -505,11 +575,10 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
                 result(FlutterError(code: "VPN_ERROR",
                                     message: "Failed to start VPN: \(error.localizedDescription)",
                                     details: nil))
-                stopTimer()
+                stopTimer(reason: "startVless-error")
                 return
             }
         }
-        startTimer()
     }
 
     private func requestPermission(result: @escaping FlutterResult) {
@@ -537,9 +606,22 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         }
         pluginLog.info("initializeVless providerBundleIdentifier=\(providerBundleIdentifier, privacy: .public) groupIdentifier=\(groupIdentifier, privacy: .public)")
         self.packetTunnelManager = PacketTunnelManager(providerBundleIdentifier: "\(providerBundleIdentifier).XrayTunnel", groupIdentifier: groupIdentifier)
+        self.packetTunnelManager?.statusDidChange = { [weak self] status in
+            guard let self else { return }
+            switch status {
+            case .connecting, .connected, .reasserting, .disconnecting:
+                self.startTimer(reason: "vpn-status-\(status?.rawValue ?? -1)")
+            case .disconnected, .invalid:
+                if !self.proxyOnlyRunner.isRunning {
+                    self.stopTimer(reason: "vpn-status-\(status?.rawValue ?? -1)")
+                }
+            default:
+                break
+            }
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
             if self.packetTunnelManager?.connectedDate != nil{
-                self.startTimer()
+                self.startTimer(reason: "initialize-existing-connected-date")
             }
         }
         result(nil)
@@ -581,6 +663,7 @@ final class PacketTunnelManager: ObservableObject {
     var xrayConfig: Data = "".data(using: .utf8)!
     var bypassSubnets: [String] = []
     var proxyOnly: Bool = false
+    var statusDidChange: ((NEVPNStatus?) -> Void)?
 
     private var cancellables: Set<AnyCancellable> = []
 
@@ -613,6 +696,7 @@ final class PacketTunnelManager: ObservableObject {
         self.cancellables.removeAll()
         self.manager = await self.loadTunnelProviderManager()
         pluginLog.info("Reloaded tunnel manager: \(self.manager != nil, privacy: .public)")
+        statusDidChange?(self.status)
         NotificationCenter.default
             .publisher(for: .NEVPNConfigurationChange, object: nil)
             .receive(on: DispatchQueue.main)
@@ -620,6 +704,9 @@ final class PacketTunnelManager: ObservableObject {
                 pluginLog.info("NEVPNConfigurationChange received")
                 Task(priority: .high) {
                     self.manager = await self.loadTunnelProviderManager()
+                    await MainActor.run {
+                        self.statusDidChange?(self.status)
+                    }
                 }
             }
             .store(in: &cancellables)
@@ -628,6 +715,7 @@ final class PacketTunnelManager: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [unowned self] _ in
                 pluginLog.info("NEVPNStatusDidChange status=\(self.status?.rawValue ?? -1, privacy: .public)")
+                self.statusDidChange?(self.status)
                 objectWillChange.send()
             }
             .store(in: &cancellables)
