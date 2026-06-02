@@ -1,9 +1,10 @@
 #!/bin/bash
+set -euo pipefail
 
 # Configuration
 XRAY_REPO="https://github.com/XTLS/Xray-core"
-XRAY_VERSION="${XRAY_VERSION:-v26.5.9}"
-TARGET_DIR="src/main/jniLibs"
+XRAY_VERSION="${XRAY_VERSION:-v26.6.1}"
+TARGET_DIR="${TARGET_DIR:-src/main/jniLibs}"
 NDK_PATH="${ANDROID_NDK_HOME:-$HOME/Library/Android/sdk/ndk/28.2.13676358}"
 
 # Check NDK
@@ -75,12 +76,15 @@ build_xray() {
     cd Xray-core
     
     # Build with 16KB page alignment
-    go build -v -trimpath -ldflags "-s -w -buildid= -linkmode=external -extldflags '${LDFLAGS}'" -buildmode=pie -o "../${OUTPUT_DIR}/libxray.so" ./main
-    
-    if [ $? -eq 0 ]; then
+    if go build -v -trimpath -buildvcs=false \
+        -gcflags "all=-l=4" \
+        -ldflags "-X github.com/xtls/xray-core/core.build=${XRAY_VERSION} -s -w -buildid= -checklinkname=0 -linkmode=external -extldflags=${LDFLAGS}" \
+        -buildmode=pie \
+        -o "../${OUTPUT_DIR}/libxray.so" ./main; then
         echo "Success: ${OUTPUT_DIR}/libxray.so created."
     else
         echo "Failed to build for ${ARCH_NAME}"
+        return 1
     fi
     
     cd ..
@@ -90,10 +94,14 @@ build_xray() {
 # API Level 21 is generally safe for modern Flutter apps (Android 5.0+)
 
 # ARM64
-build_xray "arm64-v8a" "arm64" "" "aarch64-linux-android21"
+if [ "${XRAY_BUILD_ARM64:-1}" = "1" ]; then
+    build_xray "arm64-v8a" "arm64" "" "aarch64-linux-android21"
+fi
 
 # ARMv7
-build_xray "armeabi-v7a" "arm" "7" "armv7a-linux-androideabi21"
+if [ "${XRAY_BUILD_ARMV7:-1}" = "1" ]; then
+    build_xray "armeabi-v7a" "arm" "7" "armv7a-linux-androideabi21"
+fi
 
 # x86 is disabled by default; enable for the emulator package:
 # XRAY_BUILD_X86=1 ./build_xray.sh
@@ -101,7 +109,10 @@ if [ "${XRAY_BUILD_X86:-0}" = "1" ]; then
     build_xray "x86" "386" "" "i686-linux-android21"
 fi
 
-# x86_64 (Modern 64-bit emulator)
-build_xray "x86_64" "amd64" "" "x86_64-linux-android21"
+# x86_64 is disabled by default; enable for the emulator package:
+# XRAY_BUILD_X86_64=1 ./build_xray.sh
+if [ "${XRAY_BUILD_X86_64:-0}" = "1" ]; then
+    build_xray "x86_64" "amd64" "" "x86_64-linux-android21"
+fi
 
 echo "Build process finished."

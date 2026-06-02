@@ -1,3 +1,9 @@
+## 1.1.1
+
+* Updated bundled Android device `libxray.so` binaries to Xray-core `v26.6.1`.
+* Kept Android 15+ 16KB page-size linker alignment for the rebuilt ARM binaries.
+* Made emulator ABI builds opt-in so the device package keeps only ARM native libraries.
+
 ## 1.1.0
 
 * Replaced Android Dart boilerplate with the shared `VlessMethodChannelAdapter`.

@@ -23,12 +23,21 @@ export ANDROID_NDK_HOME="$HOME/Library/Android/sdk/ndk/27.0.12077973"
 
 ## 2. Build Xray (`libxray.so`)
 
-This script builds the Xray core for all Android architectures (arm64, armv7, x86, x86_64).
+This script builds the Xray core for Android device architectures (`arm64-v8a`, `armeabi-v7a`) by default.
 
 ```bash
 cd android
 chmod +x build_xray.sh
 ./build_xray.sh
+```
+
+To build emulator binaries for the separate `flutter_vless_android_emulator` package:
+
+```bash
+cd packages/flutter_vless_android/android
+XRAY_BUILD_ARM64=0 XRAY_BUILD_ARMV7=0 XRAY_BUILD_X86=1 XRAY_BUILD_X86_64=1 \
+  TARGET_DIR="../../flutter_vless_android_emulator/android/src/main/jniLibs" \
+  ./build_xray.sh
 ```
 
 ## 3. Build Tun2socks (`libtun2socks.so`)
