@@ -42,10 +42,13 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+      - uses: android-actions/setup-android@v3
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
+      - name: Install Android SDK platform
+        run: sdkmanager "platforms;android-36"
       - name: Build Android runtime local Maven repo
         run: tool/build_android_runtime_maven.sh
       - name: Generate Flutter Android project files
