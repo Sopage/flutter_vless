@@ -94,28 +94,28 @@ packages:
       path: ".."
       relative: true
     source: path
-    version: "1.1.0"
+    version: "1.1.1"
   flutter_vless_android:
     dependency: "direct overridden"
     description:
       path: "../packages/flutter_vless_android"
       relative: true
     source: path
-    version: "1.1.0"
+    version: "1.1.1"
   flutter_vless_android_emulator:
     dependency: "direct main"
     description:
       path: "../packages/flutter_vless_android_emulator"
       relative: true
     source: path
-    version: "1.1.0"
+    version: "1.1.1"
   flutter_vless_macos:
     dependency: "direct overridden"
     description:
       path: "../packages/flutter_vless_macos"
       relative: true
     source: path
-    version: "1.1.0"
+    version: "1.1.1"
   flutter_vless_platform_interface:
     dependency: "direct overridden"
     description:
