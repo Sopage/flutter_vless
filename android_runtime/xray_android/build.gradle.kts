@@ -56,10 +56,6 @@ android {
     }
 }
 
-tasks.named("bundleReleaseAar") {
-    dependsOn("verifyRuntimeInputs")
-}
-
 afterEvaluate {
     publishing {
         publications {

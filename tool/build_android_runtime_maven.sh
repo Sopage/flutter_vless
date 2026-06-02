@@ -9,7 +9,7 @@ XRAY_RUNTIME_VERSION="${XRAY_RUNTIME_VERSION:-26.6.1}"
 "$GRADLE_WRAPPER" \
   -p "$PROJECT_DIR" \
   -PxrayRuntimeVersion="$XRAY_RUNTIME_VERSION" \
-  clean publishReleasePublicationToLocalBuildRepository
+  clean verifyRuntimeInputs publishReleasePublicationToLocalBuildRepository
 
 REPO_DIR="$PROJECT_DIR/build/repo"
 AAR_PATH="$REPO_DIR/dev/tfox/fluttervless/xray-android/$XRAY_RUNTIME_VERSION/xray-android-$XRAY_RUNTIME_VERSION.aar"
