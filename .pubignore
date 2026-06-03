@@ -20,6 +20,7 @@ apps/
 packages/
 extensions/
 native_hosts/
+android_runtime/
 
 # example build outputs
 example/build/

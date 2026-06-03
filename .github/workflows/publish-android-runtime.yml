@@ -7,6 +7,10 @@ on:
         description: Xray runtime Maven artifact version
         required: true
         default: "26.6.1.1"
+      existing_deployment_id:
+        description: Existing Central Portal deployment ID to publish instead of uploading a new bundle
+        required: false
+        default: ""
       publishing_type:
         description: Central Portal publishing mode
         required: true
@@ -29,8 +33,10 @@ jobs:
           java-version: "17"
       - uses: android-actions/setup-android@v3
       - name: Install Android SDK platform
+        if: ${{ inputs.existing_deployment_id == '' }}
         run: sdkmanager "platforms;android-36"
       - name: Upload Maven Central deployment
+        if: ${{ inputs.existing_deployment_id == '' }}
         run: tool/publish_android_runtime_maven.sh
         env:
           XRAY_RUNTIME_VERSION: ${{ inputs.xray_runtime_version }}
@@ -39,3 +45,64 @@ jobs:
           MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           SIGNING_IN_MEMORY_KEY: ${{ secrets.SIGNING_IN_MEMORY_KEY }}
           SIGNING_IN_MEMORY_KEY_PASSWORD: ${{ secrets.SIGNING_IN_MEMORY_KEY_PASSWORD }}
+      - name: Publish existing Maven Central deployment
+        if: ${{ inputs.existing_deployment_id != '' }}
+        env:
+          DEPLOYMENT_ID: ${{ inputs.existing_deployment_id }}
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          auth_token="$(printf '%s:%s' "$MAVEN_CENTRAL_USERNAME" "$MAVEN_CENTRAL_PASSWORD" | base64 | tr -d '\n')"
+          status_url="https://central.sonatype.com/api/v1/publisher/status?id=$DEPLOYMENT_ID"
+          publish_url="https://central.sonatype.com/api/v1/publisher/deployment/$DEPLOYMENT_ID"
+          deadline=$((SECONDS + 900))
+          publish_requested=0
+
+          while true; do
+            status_json="$(curl --fail --show-error --silent \
+              --request POST \
+              --header "Authorization: Bearer $auth_token" \
+              "$status_url")"
+            state="$(printf '%s' "$status_json" | jq -r '.deploymentState')"
+            echo "Deployment $DEPLOYMENT_ID state: $state"
+
+            case "$state" in
+              PUBLISHED)
+                echo "$status_json"
+                exit 0
+                ;;
+              PUBLISHING)
+                ;;
+              VALIDATED)
+                if [ "$publish_requested" -eq 0 ]; then
+                  curl --fail --show-error --silent \
+                    --request POST \
+                    --header "Authorization: Bearer $auth_token" \
+                    "$publish_url"
+                  publish_requested=1
+                  echo "Publish requested for deployment $DEPLOYMENT_ID"
+                fi
+                ;;
+              PENDING|VALIDATING)
+                ;;
+              FAILED)
+                echo "$status_json"
+                exit 1
+                ;;
+              *)
+                echo "$status_json"
+                echo "Unknown deployment state: $state" >&2
+                exit 1
+                ;;
+            esac
+
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "$status_json"
+              echo "Timed out waiting for deployment $DEPLOYMENT_ID to publish" >&2
+              exit 1
+            fi
+
+            sleep 15
+          done
