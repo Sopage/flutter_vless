@@ -14,7 +14,7 @@ flutter run -d android
 ```
 
 The Android runtime AAR includes both device and emulator ABIs, so the example
-can run on Android devices and emulators without an extra emulator package.
+can run on Android devices and emulators with the main Android dependency.
 
 ## What You Need
 

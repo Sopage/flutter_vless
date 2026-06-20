@@ -1,3 +1,11 @@
+## 1.1.2
+
+* Fixed macOS Packet Tunnel setup for hosted Pub packages whose generated SwiftPM symlink includes the package version.
+* Added an iOS SwiftPM `FlutterFramework` fallback so direct local package references can resolve the tunnel support product.
+* Documented the iOS 15.0 deployment target requirement and generated SwiftPM package path guidance for manual Xcode integration.
+* Clarified that Android emulator binaries are included in the main Maven runtime AAR.
+* Updated Android and macOS platform package constraints to the `1.1.2` release train.
+
 ## 1.1.1
 
 * Updated the iOS XRay core target to upstream `v26.6.1`.

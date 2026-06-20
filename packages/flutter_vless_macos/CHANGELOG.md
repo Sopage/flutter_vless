@@ -1,3 +1,8 @@
+## 1.1.2
+
+* Fixed Packet Tunnel setup for hosted Pub packages whose generated SwiftPM symlink includes the package version.
+* Patched existing Xcode local Swift package references when they still point at a stale unversioned package path.
+
 ## 1.1.1
 
 * Updated the macOS XRay core target to upstream `v26.6.1`.

@@ -27,7 +27,7 @@ license notices required by the license. See [NOTICE](NOTICE) and
 
 | Platform | Mode | Notes |
 | --- | --- | --- |
-| Android | VPN, proxy-only | `blockedApps` is supported. Emulator support is split into a separate package. |
+| Android | VPN, proxy-only | `blockedApps` is supported. The Maven runtime AAR includes device and emulator ABIs. |
 | iOS | VPN, proxy-only | Real device required for packet-tunnel testing. App Group and Network Extension are required. |
 | macOS | VPN, proxy-only | Packet Tunnel setup is required. See the macOS architecture notes for route and DNS details. |
 | Windows | VPN, proxy-only | Xray must be available locally. Admin rights may be required for tunnel mode. |
@@ -36,7 +36,7 @@ license notices required by the license. See [NOTICE](NOTICE) and
 
 - Android 16KB page size support for modern builds.
 - Swift Package Manager support for iOS and macOS integration.
-- Separate Android emulator package for x86_64 emulator targets.
+- Android device and emulator runtime binaries delivered through the main Maven runtime AAR.
 - Share-link, subscription, raw JSON, Clash YAML, and sing-box import paths.
 - Proxy-only mode and VPN/tunnel mode.
 - Runtime delay checks and status tracking.
@@ -74,7 +74,7 @@ setup, and Windows needs `example/windows/xray/xray.exe`.
 
 ```yaml
 dependencies:
-  flutter_vless: ^1.1.1
+  flutter_vless: ^1.1.2
 ```
 
 Then run:
@@ -83,11 +83,7 @@ Then run:
 flutter pub get
 ```
 
-If you need the Android emulator binaries, add the emulator package as well:
-
-```bash
-flutter pub add flutter_vless_android_emulator
-```
+Android emulator binaries are included in the main Android Maven runtime AAR.
 
 ## Quick Start
 

@@ -10,6 +10,5 @@ Do not add raw `android/src/main/jniLibs` or geodata files back to this package.
 
 ## Emulator Support
 
-The current Maven runtime AAR includes `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64`. New apps do not need the separate `flutter_vless_android_emulator` package.
-
-The `flutter_vless_android_emulator` package is kept only as a compatibility package for older release trains that did not include emulator ABIs in the main AAR.
+The current Maven runtime AAR includes `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64`.
+This covers both physical Android devices and Android emulators.

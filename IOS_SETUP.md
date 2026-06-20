@@ -89,6 +89,10 @@ Use the same App Group on both targets.
 
 ### 5. Add SwiftPM products
 
+Set every iOS target that links `flutter_vless` to iOS 15.0 or newer. A new
+Flutter iOS project may still default the generated SwiftPM package to iOS 13.0
+until Flutter sees the project deployment target during build.
+
 Add package products to targets:
 
 - `Runner`: `flutter-vless`
@@ -96,6 +100,19 @@ Add package products to targets:
 
 The tunnel support package links `XRay`, `Tun2SocksKit`, `Tun2SocksKitC`, and
 `libresolv`.
+
+When adding the package manually in Xcode, prefer the package already generated
+by Flutter:
+
+```text
+ios/Flutter/ephemeral/Packages/.packages/flutter_vless-<version>
+```
+
+Do not add the package directly from the Pub cache path such as
+`.../flutter_vless-1.1.1/ios/flutter_vless` on old releases; that path can make
+SwiftPM look for a sibling `ios/FlutterFramework` directory and fail package
+resolution. Run `flutter pub get` first if the `ios/Flutter/ephemeral/Packages`
+directory does not exist.
 
 ### 6. Add PacketTunnelProvider
 

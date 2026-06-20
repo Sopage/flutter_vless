@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
@@ -23,8 +24,8 @@ import 'dart:math';
 const tunnelTargetName = 'XrayTunnel';
 const tunnelProductName = 'flutter-vless-macos-tunnel-support';
 const tunnelModuleName = 'flutter_vless_macos_tunnel_support';
-const pluginPackageRelativePath =
-    'Flutter/ephemeral/Packages/.packages/flutter_vless_macos';
+const pluginPackageName = 'flutter_vless_macos';
+const pluginPackagesRelativeDir = 'Flutter/ephemeral/Packages/.packages';
 
 void main(List<String> args) async {
   final options = _Options.parse(args);
@@ -46,7 +47,7 @@ void main(List<String> args) async {
     _fail('Both --bundle-id and --group-id are required.');
   }
 
-  await _ensureFlutterPackages(appRoot);
+  final pluginPackageRelativePath = await _ensureFlutterPackageLink(appRoot);
   _writeTunnelFiles(macosDir, options.groupId!);
 
   final project = _PbxProject(pbxprojFile.readAsStringSync());
@@ -55,6 +56,7 @@ void main(List<String> args) async {
     groupId: options.groupId!,
     teamId: options.teamId,
     deploymentTarget: options.deploymentTarget,
+    pluginPackageRelativePath: pluginPackageRelativePath,
   );
   pbxprojFile.writeAsStringSync(project.text);
 
@@ -81,14 +83,9 @@ Options:
 ''');
 }
 
-Future<void> _ensureFlutterPackages(Directory appRoot) async {
-  final packageLink = Link(
-    '${appRoot.path}/macos/$pluginPackageRelativePath',
-  );
-  final packageDir = Directory(packageLink.path);
-  if (packageLink.existsSync() || packageDir.existsSync()) {
-    return;
-  }
+Future<String> _ensureFlutterPackageLink(Directory appRoot) async {
+  final existing = _findFlutterPackageLink(appRoot);
+  if (existing != null) return existing;
 
   stdout.writeln(
       'Flutter generated packages are missing; running flutter pub get...');
@@ -102,6 +99,112 @@ Future<void> _ensureFlutterPackages(Directory appRoot) async {
   if (result.exitCode != 0) {
     _fail('flutter pub get failed.');
   }
+
+  final generated = _findFlutterPackageLink(appRoot);
+  if (generated != null) return generated;
+
+  final restored = _restoreFlutterPackageLinkFromPackageConfig(appRoot);
+  if (restored != null) return restored;
+
+  _fail(
+    'Could not find Flutter Swift package link for $pluginPackageName. '
+    'Expected a Package.swift under macos/$pluginPackagesRelativeDir/$pluginPackageName*. '
+    'Run flutter clean, flutter pub get, and retry.',
+  );
+}
+
+String? _findFlutterPackageLink(Directory appRoot) {
+  final packagesDir =
+      Directory('${appRoot.path}/macos/$pluginPackagesRelativeDir');
+  if (!packagesDir.existsSync()) return null;
+
+  final entries = packagesDir
+      .listSync(followLinks: false)
+      .where((entry) {
+        final name = _basename(entry.path);
+        return _isFlutterVlessMacOSPackageName(name) &&
+            File('${entry.path}/Package.swift').existsSync();
+      })
+      .map((entry) => _basename(entry.path))
+      .toList()
+    ..sort();
+
+  if (entries.contains(pluginPackageName)) {
+    return '$pluginPackagesRelativeDir/$pluginPackageName';
+  }
+  if (entries.isNotEmpty) {
+    return '$pluginPackagesRelativeDir/${entries.last}';
+  }
+
+  return null;
+}
+
+String? _restoreFlutterPackageLinkFromPackageConfig(Directory appRoot) {
+  final packageConfigFile =
+      File('${appRoot.path}/.dart_tool/package_config.json');
+  if (!packageConfigFile.existsSync()) return null;
+
+  Object? decoded;
+  try {
+    decoded = jsonDecode(packageConfigFile.readAsStringSync());
+  } on FormatException {
+    return null;
+  }
+  if (decoded is! Map<String, Object?>) return null;
+  final packages = decoded['packages'];
+  if (packages is! List<Object?>) return null;
+
+  for (final package in packages) {
+    if (package is! Map<String, Object?> ||
+        package['name'] != pluginPackageName) {
+      continue;
+    }
+    final rootUriValue = package['rootUri'];
+    if (rootUriValue is! String) return null;
+    final packageRoot = _packageRootFromConfigUri(
+      packageConfigFile,
+      rootUriValue,
+    );
+    if (packageRoot == null) return null;
+
+    final swiftPackageDir =
+        Directory('${packageRoot.path}/macos/$pluginPackageName');
+    if (!File('${swiftPackageDir.path}/Package.swift').existsSync()) {
+      return null;
+    }
+
+    final packagesDir =
+        Directory('${appRoot.path}/macos/$pluginPackagesRelativeDir')
+          ..createSync(recursive: true);
+    final link = Link('${packagesDir.path}/$pluginPackageName');
+    if (link.existsSync()) {
+      link.updateSync(swiftPackageDir.path);
+    } else if (!Directory(link.path).existsSync()) {
+      link.createSync(swiftPackageDir.path, recursive: true);
+    }
+    return '$pluginPackagesRelativeDir/$pluginPackageName';
+  }
+
+  return null;
+}
+
+Directory? _packageRootFromConfigUri(File packageConfigFile, String rootUri) {
+  final uri = Uri.tryParse(rootUri);
+  if (uri == null) return null;
+  final resolved =
+      uri.hasScheme ? uri : packageConfigFile.parent.uri.resolveUri(uri);
+  if (resolved.scheme != 'file') return null;
+  return Directory.fromUri(resolved);
+}
+
+bool _isFlutterVlessMacOSPackageName(String name) {
+  return name == pluginPackageName || name.startsWith('$pluginPackageName-');
+}
+
+String _basename(String path) {
+  final normalized = path.replaceAll('\\', '/');
+  final slash = normalized.lastIndexOf('/');
+  return slash == -1 ? normalized : normalized.substring(slash + 1);
 }
 
 void _writeTunnelFiles(Directory macosDir, String groupId) {
@@ -267,6 +370,7 @@ class _PbxProject {
     required String bundleId,
     required String groupId,
     required String deploymentTarget,
+    required String pluginPackageRelativePath,
     String? teamId,
   }) {
     final projectId = _requiredMatch(
@@ -288,10 +392,12 @@ class _PbxProject {
         (throw StateError('Could not find Runner target in project.pbxproj.'));
     final tunnelTargetId = _targetId(tunnelTargetName) ?? _id();
 
-    final supportPackageId = _ensureLocalPackageReference();
+    final supportPackageId =
+        _ensureLocalPackageReference(pluginPackageRelativePath);
     final supportProductId = _ensurePackageProductDependency(
       productName: tunnelProductName,
       packageId: supportPackageId,
+      pluginPackageRelativePath: pluginPackageRelativePath,
     );
     final supportBuildFileId = _ensureProductBuildFile(
       productName: tunnelProductName,
@@ -450,12 +556,16 @@ class _PbxProject {
     _patchTunnelBuildSettings(bundleId, deploymentTarget, teamId);
   }
 
-  String _ensureLocalPackageReference() {
+  String _ensureLocalPackageReference(String pluginPackageRelativePath) {
     final existing = RegExp(
-      r'([A-Z0-9]{24}) /\* XCLocalSwiftPackageReference "[^"]*flutter_vless_macos" \*/ = \{\s*isa = XCLocalSwiftPackageReference;\s*relativePath = [^;]*flutter_vless_macos;',
+      r'([A-Z0-9]{24}) /\* XCLocalSwiftPackageReference "[^"]*flutter_vless_macos[^"]*" \*/ = \{\s*isa = XCLocalSwiftPackageReference;\s*relativePath = [^;]*flutter_vless_macos[^;]*;',
       multiLine: true,
     ).firstMatch(text);
-    if (existing != null) return existing.group(1)!;
+    if (existing != null) {
+      final id = existing.group(1)!;
+      _patchLocalPackageReference(id, pluginPackageRelativePath);
+      return id;
+    }
 
     final id = _id();
     _insertObject(
@@ -470,14 +580,48 @@ class _PbxProject {
     return id;
   }
 
+  void _patchLocalPackageReference(
+    String id,
+    String pluginPackageRelativePath,
+  ) {
+    final block = _objectBlock(id);
+    final updatedBlock = block.text.replaceFirst(
+      RegExp(r'relativePath = [^;]+;'),
+      'relativePath = $pluginPackageRelativePath;',
+    );
+    text = text.replaceRange(block.start, block.end, updatedBlock);
+    _patchLocalPackageReferenceComments(id, pluginPackageRelativePath);
+  }
+
+  void _patchLocalPackageReferenceComments(
+    String id,
+    String pluginPackageRelativePath,
+  ) {
+    text = text.replaceAll(
+      RegExp(
+        '$id /\\* XCLocalSwiftPackageReference "[^"]*flutter_vless_macos[^"]*" \\*/',
+      ),
+      '$id /* XCLocalSwiftPackageReference "$pluginPackageRelativePath" */',
+    );
+  }
+
   String _ensurePackageProductDependency({
     required String productName,
     required String packageId,
+    required String pluginPackageRelativePath,
   }) {
     final existing = RegExp(
       '([A-Z0-9]{24}) /\\* $productName \\*/ = \\{[\\s\\S]*?productName = $productName;',
     ).firstMatch(text);
-    if (existing != null) return existing.group(1)!;
+    if (existing != null) {
+      final id = existing.group(1)!;
+      _patchPackageProductDependency(
+        id: id,
+        packageId: packageId,
+        pluginPackageRelativePath: pluginPackageRelativePath,
+      );
+      return id;
+    }
 
     final id = _id();
     _insertObject(
@@ -491,6 +635,21 @@ class _PbxProject {
 ''',
     );
     return id;
+  }
+
+  void _patchPackageProductDependency({
+    required String id,
+    required String packageId,
+    required String pluginPackageRelativePath,
+  }) {
+    final block = _objectBlock(id);
+    final updatedBlock = block.text.replaceFirst(
+      RegExp(
+        r'package = [A-Z0-9]{24} /\* XCLocalSwiftPackageReference "[^"]*flutter_vless_macos[^"]*" \*/;',
+      ),
+      'package = $packageId /* XCLocalSwiftPackageReference "$pluginPackageRelativePath" */;',
+    );
+    text = text.replaceRange(block.start, block.end, updatedBlock);
   }
 
   String _ensureProductBuildFile({

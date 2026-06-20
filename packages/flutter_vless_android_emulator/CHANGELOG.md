@@ -1,3 +1,7 @@
+## 1.1.2
+
+* Marked the package as legacy because current `flutter_vless_android` releases include x86 and x86_64 emulator support in the main Maven runtime AAR.
+
 ## 1.1.1
 
 * Updated bundled Android emulator `libxray.so` binaries to Xray-core `v26.6.1`.

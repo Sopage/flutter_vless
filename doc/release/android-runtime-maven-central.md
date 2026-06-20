@@ -32,9 +32,9 @@ x86
 x86_64
 ```
 
-The old `flutter_vless_android_emulator` package is a compatibility package for
-older release trains only. Do not require it for new `flutter_vless_android`
-releases unless the main AAR intentionally drops emulator ABIs again.
+Older release trains used an emulator-only compatibility package. Current
+`flutter_vless_android` releases must not require that package because the main
+runtime AAR carries emulator ABIs as part of the normal Android dependency.
 
 ## Central Portal Setup
 

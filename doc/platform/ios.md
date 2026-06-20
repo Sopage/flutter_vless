@@ -28,6 +28,7 @@ flutter run -d <your-iphone-id>
 ## What You Need
 
 - a real Apple Developer account and a signing-capable iPhone
+- iOS 15.0 or newer as the deployment target
 - a Packet Tunnel extension target
 - App Groups enabled on both the app and the tunnel target
 - the same base app bundle id passed from Dart
@@ -58,8 +59,20 @@ The plugin appends `.XrayTunnel` internally for the tunnel extension.
 2. Add the package to your own app.
 3. Create a Packet Tunnel extension named `XrayTunnel`.
 4. Enable App Groups and Network Extensions on both targets.
-5. Pass the base bundle id and App Group from Dart.
-6. Test on a real device.
+5. Set `Runner`, `XrayTunnel`, and generated SwiftPM integration to iOS 15.0+.
+6. Pass the base bundle id and App Group from Dart.
+7. Test on a real device.
+
+When you add the SwiftPM product for the tunnel target, use the package path
+that Flutter generated under:
+
+```text
+ios/Flutter/ephemeral/Packages/.packages/flutter_vless-<version>
+```
+
+Avoid adding `ios/flutter_vless` directly from the Pub cache on old releases;
+that can make SwiftPM search for a missing sibling `ios/FlutterFramework`
+directory.
 
 ## PacketTunnelProvider.swift
 
