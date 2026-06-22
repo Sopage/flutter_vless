@@ -48,6 +48,11 @@ void main(List<String> args) async {
   }
 
   final pluginPackageRelativePath = await _ensureFlutterPackageLink(appRoot);
+  _patchGeneratedPluginSwiftPackage(
+    macosDir,
+    pluginPackageRelativePath,
+    options.deploymentTarget,
+  );
   _writeTunnelFiles(macosDir, options.groupId!);
 
   final project = _PbxProject(pbxprojFile.readAsStringSync());
@@ -195,6 +200,36 @@ Directory? _packageRootFromConfigUri(File packageConfigFile, String rootUri) {
       uri.hasScheme ? uri : packageConfigFile.parent.uri.resolveUri(uri);
   if (resolved.scheme != 'file') return null;
   return Directory.fromUri(resolved);
+}
+
+void _patchGeneratedPluginSwiftPackage(
+  Directory macosDir,
+  String pluginPackageRelativePath,
+  String deploymentTarget,
+) {
+  final packageFile = File(
+    '${macosDir.path}/Flutter/ephemeral/Packages/'
+    'FlutterGeneratedPluginSwiftPackage/Package.swift',
+  );
+  if (!packageFile.existsSync()) return;
+
+  final packageLinkName = _basename(pluginPackageRelativePath);
+  final generatedRelativePath = '../.packages/$packageLinkName';
+  final source = packageFile.readAsStringSync();
+  final updated = source
+      .replaceAll(
+        RegExp(
+          r'\.package\(name:\s*"flutter_vless_macos",\s*path:\s*"\.\./\.packages/flutter_vless_macos[^"]*"\)',
+        ),
+        '.package(name: "flutter_vless_macos", path: "$generatedRelativePath")',
+      )
+      .replaceAll(
+        RegExp(r'\.macOS\("[^"]+"\)'),
+        '.macOS("$deploymentTarget")',
+      );
+  if (updated != source) {
+    packageFile.writeAsStringSync(updated);
+  }
 }
 
 bool _isFlutterVlessMacOSPackageName(String name) {
@@ -1179,8 +1214,12 @@ ${isDebug ? '\t\t\t\tSWIFT_OPTIMIZATION_LEVEL = "-Onone";\n' : ''}\t\t\t};
   }
 
   _Block _objectBlock(String id) {
-    final start = text.indexOf('\t\t$id ');
-    if (start < 0) _fail('Could not find Xcode object $id.');
+    final objectLine = RegExp(
+      '^\\t\\t${RegExp.escape(id)}(?: /\\*[^\\n]*\\*/)? = \\{',
+      multiLine: true,
+    ).firstMatch(text);
+    if (objectLine == null) _fail('Could not find Xcode object $id.');
+    final start = objectLine.start;
     var brace = text.indexOf('{', start);
     var depth = 0;
     for (var i = brace; i < text.length; i++) {

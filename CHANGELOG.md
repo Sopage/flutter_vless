@@ -1,6 +1,7 @@
 ## 1.1.3
 
 * Fixed macOS SwiftPM builds by updating the macOS package dependency to the release that explicitly imports the `CXRay` shim.
+* Fixed repeated macOS Packet Tunnel setup so existing Xcode and generated SwiftPM package references update their paths to versioned hosted package symlinks.
 
 ## 1.1.2
 
