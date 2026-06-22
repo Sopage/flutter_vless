@@ -580,12 +580,13 @@ public enum TunnelXrayConfigPreparer {
         return true
     }
 
-    /// Forces all local tunnel inbound traffic to the proxy outbound.
+    /// Forces unmatched local tunnel inbound traffic to the proxy outbound.
     ///
     /// Imported configs often contain routing rules intended for normal Xray
     /// clients, not for a Network Extension feeding system traffic through one
-    /// local inbound. This high-priority rule prevents HEV-originated traffic
-    /// from falling through to `freedom` or another default outbound.
+    /// local inbound. This fallback rule prevents HEV-originated traffic from
+    /// falling through to `freedom` or another default outbound, while still
+    /// keeping user domain/IP split-routing rules above it.
     private static func ensureForceProxyRule(
         configJSON: inout [String: Any],
         inboundTags: [String],
@@ -605,14 +606,57 @@ public enum TunnelXrayConfigPreparer {
         if alreadyExists {
             return false
         }
+        let insertionIndex = forceProxyRuleInsertionIndex(rules: rules)
         rules.insert([
             "type": "field",
             "inboundTag": sortedInboundTags,
             "outboundTag": outboundTag
-        ], at: 0)
+        ], at: insertionIndex)
         routing["rules"] = rules
         configJSON["routing"] = routing
         return true
+    }
+
+    /// Keeps user-specific rules before the forced proxy fallback.
+    ///
+    /// Xray applies routing rules in order. A broad `inboundTag -> proxy` rule
+    /// above `domain:example.com -> direct` makes split routing impossible. The
+    /// fallback therefore goes after rules that constrain destination/protocol,
+    /// but before broad inbound-only or catch-all rules that could leak Packet
+    /// Tunnel traffic to `freedom`.
+    private static func forceProxyRuleInsertionIndex(rules: [[String: Any]]) -> Int {
+        for (index, rule) in rules.enumerated() {
+            if !hasSpecificRoutingCondition(rule) {
+                return index
+            }
+        }
+        return rules.count
+    }
+
+    private static func hasSpecificRoutingCondition(_ rule: [String: Any]) -> Bool {
+        let specificKeys = [
+            "domain",
+            "ip",
+            "port",
+            "network",
+            "protocol",
+            "source",
+            "sourcePort",
+            "user",
+            "attrs"
+        ]
+        return specificKeys.contains { key in
+            guard let value = rule[key] else {
+                return false
+            }
+            if let list = value as? [Any] {
+                return !list.isEmpty
+            }
+            if let string = value as? String {
+                return !string.isEmpty
+            }
+            return true
+        }
     }
 
     /// Legacy helper retained for tests/history, but not used by the current
