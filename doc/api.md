@@ -169,7 +169,8 @@ Supported input:
 - sing-box JSON
 
 Clash YAML and sing-box JSON imports can also produce generated Xray configs
-for supported profile objects such as WireGuard and Hysteria2.
+for supported profile objects such as WireGuard, Hysteria2, and HTTP proxy
+outbounds.
 
 If a subscription contains multiple supported profiles, `parse()` returns the
 first one. Use `parseMany()` to keep the full list.

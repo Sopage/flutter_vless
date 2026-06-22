@@ -267,6 +267,9 @@ class VlessSubscriptionParser {
   ) {
     final type = _string(proxy, 'type')?.toLowerCase();
     switch (type) {
+      case 'http':
+      case 'https':
+        return _httpConfigFromClash(proxy);
       case 'wireguard':
         return _wireGuardConfigFromClash(proxy);
       case 'hysteria2':
@@ -300,6 +303,8 @@ class VlessSubscriptionParser {
   ) {
     final type = _string(outbound, 'type')?.toLowerCase();
     switch (type) {
+      case 'http':
+        return _httpConfigFromSingBox(outbound);
       case 'wireguard':
         return _wireGuardConfigFromSingBox(outbound);
       case 'hysteria2':
@@ -307,6 +312,119 @@ class VlessSubscriptionParser {
       default:
         return null;
     }
+  }
+
+  static Map<String, dynamic>? _httpConfigFromClash(
+    Map<String, dynamic> proxy,
+  ) {
+    return _httpConfigFromFields(
+      remark: _string(proxy, 'name'),
+      server: _string(proxy, 'server'),
+      port: _int(proxy, 'port'),
+      username: _string(proxy, 'username') ?? _string(proxy, 'user'),
+      password: _string(proxy, 'password') ?? _string(proxy, 'pass'),
+      headers: _httpProxyHeadersFromClash(proxy),
+      path: _httpProxyPathFromClash(proxy),
+      useTls: (_string(proxy, 'type')?.toLowerCase() == 'https') ||
+          _bool(proxy, 'tls') == true,
+      sni: _string(proxy, 'sni') ?? _string(proxy, 'servername'),
+      alpn: _stringOrList(proxy['alpn']),
+      fingerprint: _string(proxy, 'client-fingerprint'),
+      pinnedPeerCertSha256: _firstString(proxy, const [
+        'pcs',
+        'pinned-peer-cert-sha256',
+        'pinnedPeerCertSha256',
+      ]),
+      verifyPeerCertByName: _firstString(proxy, const [
+        'vcn',
+        'verify-peer-cert-by-name',
+        'verifyPeerCertByName',
+      ]),
+    );
+  }
+
+  static Map<String, dynamic>? _httpConfigFromSingBox(
+    Map<String, dynamic> outbound,
+  ) {
+    final tls = _map(outbound, 'tls');
+    return _httpConfigFromFields(
+      remark: _string(outbound, 'tag'),
+      server: _string(outbound, 'server'),
+      port: _int(outbound, 'server_port'),
+      username: _string(outbound, 'username') ?? _string(outbound, 'user'),
+      password: _string(outbound, 'password') ?? _string(outbound, 'pass'),
+      headers: _stringMap(outbound['headers']),
+      path: _string(outbound, 'path'),
+      useTls: _bool(tls, 'enabled') == true,
+      sni: _string(tls, 'server_name'),
+      alpn: _stringOrList(tls?['alpn']),
+      fingerprint: _string(_map(tls, 'utls'), 'fingerprint'),
+      pinnedPeerCertSha256: _firstString(tls ?? const {}, const [
+        'pcs',
+        'pinned_peer_cert_sha256',
+        'pinnedPeerCertSha256',
+      ]),
+      verifyPeerCertByName: _firstString(tls ?? const {}, const [
+        'vcn',
+        'verify_peer_cert_by_name',
+        'verifyPeerCertByName',
+      ]),
+    );
+  }
+
+  static Map<String, dynamic>? _httpConfigFromFields({
+    required String? remark,
+    required String? server,
+    required int? port,
+    required String? username,
+    required String? password,
+    required Map<String, dynamic>? headers,
+    required String? path,
+    required bool useTls,
+    required String? sni,
+    required String? alpn,
+    required String? fingerprint,
+    required String? pinnedPeerCertSha256,
+    required String? verifyPeerCertByName,
+  }) {
+    if (server == null || port == null || !_supportsHttpProxyPath(path)) {
+      return null;
+    }
+
+    final settings = <String, dynamic>{
+      'address': server,
+      'port': port,
+      if (username != null) 'user': username,
+      if (password != null) 'pass': password,
+      if (headers != null && headers.isNotEmpty) 'headers': headers,
+    };
+
+    final outbound = <String, dynamic>{
+      'tag': 'proxy',
+      'protocol': 'http',
+      'settings': settings,
+    };
+
+    if (useTls) {
+      outbound['streamSettings'] = {
+        'network': 'raw',
+        'security': 'tls',
+        'tlsSettings': {
+          'serverName': sni ?? server,
+          if (alpn != null) 'alpn': alpn.split(','),
+          if (fingerprint != null) 'fingerprint': fingerprint,
+          if (pinnedPeerCertSha256 != null)
+            'pinnedPeerCertSha256': pinnedPeerCertSha256,
+          if (verifyPeerCertByName != null)
+            'verifyPeerCertByName': verifyPeerCertByName,
+        },
+      };
+    }
+
+    return _fullXrayConfig(
+      remark: remark ?? server,
+      outbound: outbound,
+    );
   }
 
   static Map<String, dynamic>? _wireGuardConfigFromClash(
@@ -877,6 +995,23 @@ class VlessSubscriptionParser {
         _map(proxy, 'http_upgrade_opts');
   }
 
+  static Map<String, dynamic>? _httpProxyOptions(
+    Map<String, dynamic> proxy,
+  ) {
+    return _map(proxy, 'http-opts') ?? _map(proxy, 'http_opts');
+  }
+
+  static Map<String, dynamic>? _httpProxyHeadersFromClash(
+    Map<String, dynamic> proxy,
+  ) {
+    return _stringMap(proxy['headers']) ??
+        _stringMap(_map(_httpProxyOptions(proxy), 'headers'));
+  }
+
+  static String? _httpProxyPathFromClash(Map<String, dynamic> proxy) {
+    return _string(proxy, 'path') ?? _string(_httpProxyOptions(proxy), 'path');
+  }
+
   static Map<String, dynamic>? _httpUpgradeHeadersFromClash(
     Map<String, dynamic> proxy,
   ) {
@@ -910,6 +1045,13 @@ class VlessSubscriptionParser {
       }
     });
     return filtered.isEmpty ? null : filtered;
+  }
+
+  static bool _supportsHttpProxyPath(String? path) {
+    // Xray's HTTP outbound can carry headers and TLS, but it does not expose a
+    // configurable request path like sing-box. Skip those profiles instead of
+    // silently dropping a server-side requirement.
+    return path == null || path.isEmpty;
   }
 
   static String _singBoxTransportType(Map<String, dynamic>? transport) {

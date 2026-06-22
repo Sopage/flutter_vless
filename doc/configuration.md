@@ -19,7 +19,8 @@ The public API intentionally keeps both layers accessible, because different use
 - sing-box JSON
 
 Clash YAML and sing-box JSON imports can also produce generated Xray configs
-for supported profile objects such as WireGuard and Hysteria2.
+for supported profile objects such as WireGuard, Hysteria2, and HTTP proxy
+outbounds.
 
 Unsupported or not-yet-mapped protocols are skipped instead of being converted
 into broken Xray output. The next-version protocol inventory is tracked in

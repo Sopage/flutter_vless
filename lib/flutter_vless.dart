@@ -193,8 +193,9 @@ class FlutterVless {
   /// Unsupported protocols are skipped intentionally. This plugin embeds Xray,
   /// so protocols that do not yet have a verified Xray import mapping should
   /// remain explicit product-scope gaps instead of silently producing broken
-  /// Xray JSON. WireGuard and Hysteria2 are Xray protocols, but their runtime
-  /// behavior still needs platform artifact validation before release.
+  /// Xray JSON. WireGuard, Hysteria2, and HTTP proxy profiles are supported in
+  /// subscription import paths, but their runtime behavior still needs
+  /// platform artifact validation before release.
   static List<FlutterVlessURL> parseMany(String input) {
     return VlessSubscriptionParser.parseMany(
       input: input,

@@ -26,7 +26,7 @@ server. Service outbounds and inbounds remain raw JSON / advanced-builder scope.
 | `socks` | Supported from `socks://`, Clash YAML, sing-box JSON, raw Xray JSON | Keep. |
 | `wireguard` | Raw Xray JSON plus generated import from Clash YAML and sing-box JSON | Validate Android, iOS, macOS, and Windows artifacts with `xray run -test`; no public `wireguard://` parser until an accepted share-link shape is chosen. |
 | `hysteria` (`version: 2`) | Raw Xray JSON plus `hysteria2://` / `hy2://`, Clash YAML, and sing-box JSON import | Validate Android, iOS, macOS, and Windows artifacts with `xray run -test`; update packaged artifacts where older Xray builds reject `network: hysteria`. |
-| `http` | Raw Xray JSON only | Decide whether to add `http://` / HTTPS proxy profile import. This is a proxy profile, not a browser URL parser. |
+| `http` | Raw Xray JSON plus generated import from Clash YAML and sing-box JSON | Keep subscription/import-context only. Do not treat arbitrary browser `http://` URLs as proxy profiles. |
 | `freedom` | Internal direct outbound and raw Xray JSON | Keep advanced/raw only. It is routing policy, not a remote server profile. |
 | `blackhole` | Internal block outbound and raw Xray JSON | Keep advanced/raw only. It is routing policy, not a remote server profile. |
 | `dns` | Raw Xray JSON only | Keep advanced/raw only. |
@@ -96,10 +96,11 @@ Transport security remains `tls`, `reality`, and `none`. `FinalMask` and
    `streamSettings.network = "hysteria"`, `hysteriaSettings.version = 2`, and
    `hysteriaSettings.auth`.
 
-7. HTTP proxy outbound import.
-   Decide if `http://` profile import is worth the ambiguity with ordinary web
-   URLs. If implemented, require explicit parsing via subscription/import
-   context, not `parseFromURL()` on arbitrary browser URLs.
+7. HTTP proxy outbound import. Done for Clash YAML and sing-box JSON.
+   Keep the import scoped to subscription/import context. Do not add
+   `parseFromURL()` support for arbitrary `http://` browser URLs unless the
+   product gets an explicit proxy-link format that cannot be confused with web
+   navigation.
 
 8. Documentation and device matrix.
    Extend `doc/device_matrix.md` with WireGuard, Hysteria2, HTTPUpgrade, raw,
@@ -112,7 +113,6 @@ Transport security remains `tls`, `reality`, and `none`. `FinalMask` and
   JSON for each supported profile class.
 - `xray run -test` succeeds for generated JSON on every packaged Xray artifact.
 - At least one real-device tunnel or proxy-only smoke test exists for every new
-  client-facing protocol: WireGuard, Hysteria2, HTTPUpgrade, and HTTP proxy if
-  enabled.
+  client-facing protocol: WireGuard, Hysteria2, HTTPUpgrade, and HTTP proxy.
 - Unsupported formats are skipped with tests; they must not produce broken Xray
   JSON silently.

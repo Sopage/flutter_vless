@@ -153,6 +153,62 @@ proxies:
       expect(httpupgrade['headers'], {'X-Forwarded-For': '203.0.113.7'});
     });
 
+    test('imports Clash YAML HTTP and HTTPS proxy profiles', () {
+      final profiles = FlutterVless.parseMany('''
+proxies:
+  - name: HTTP
+    type: http
+    server: proxy.example.com
+    port: 8080
+    username: alice
+    password: secret
+    headers:
+      X-Proxy-Region: ru-central
+  - name: HTTPS
+    type: https
+    server: secure-proxy.example.com
+    port: 8443
+    username: bob
+    password: hunter2
+    sni: edge.example.com
+    alpn:
+      - h2
+      - http/1.1
+    client-fingerprint: chrome
+    headers:
+      X-Proxy-Region: eu-west
+''');
+
+      final httpConfig = decodedConfig(profiles.first);
+      final http = proxyOutbound(httpConfig);
+      final httpSettings = http['settings'] as Map<String, dynamic>;
+      final httpsConfig = decodedConfig(profiles.last);
+      final https = proxyOutbound(httpsConfig);
+      final httpsSettings = https['settings'] as Map<String, dynamic>;
+      final stream = streamSettings(httpsConfig);
+      final tls = stream['tlsSettings'] as Map<String, dynamic>;
+
+      expect(profiles, hasLength(2));
+      expect(http['protocol'], 'http');
+      expect(http.containsKey('streamSettings'), isFalse);
+      expect(httpSettings['address'], 'proxy.example.com');
+      expect(httpSettings['port'], 8080);
+      expect(httpSettings['user'], 'alice');
+      expect(httpSettings['pass'], 'secret');
+      expect(httpSettings['headers'], {'X-Proxy-Region': 'ru-central'});
+      expect(https['protocol'], 'http');
+      expect(httpsSettings['address'], 'secure-proxy.example.com');
+      expect(httpsSettings['port'], 8443);
+      expect(httpsSettings['user'], 'bob');
+      expect(httpsSettings['pass'], 'hunter2');
+      expect(httpsSettings['headers'], {'X-Proxy-Region': 'eu-west'});
+      expect(stream['network'], 'raw');
+      expect(stream['security'], 'tls');
+      expect(tls['serverName'], 'edge.example.com');
+      expect(tls['alpn'], ['h2', 'http/1.1']);
+      expect(tls['fingerprint'], 'chrome');
+    });
+
     test('imports Clash YAML WireGuard and Hysteria2 profiles', () {
       final profiles = FlutterVless.parseMany('''
 proxies:
@@ -287,6 +343,68 @@ proxies:
       expect(tls['fingerprint'], 'chrome');
       expect(hysteria['auth'], 'secret');
       expect(hysteria['udpIdleTimeout'], 90);
+    });
+
+    test('imports sing-box JSON HTTP proxy and skips custom path variants', () {
+      final profiles = FlutterVless.parseMany(jsonEncode({
+        'outbounds': [
+          {
+            'type': 'http',
+            'tag': 'http',
+            'server': 'proxy.example.com',
+            'server_port': 8080,
+            'username': 'alice',
+            'password': 'secret',
+            'headers': {
+              'X-Proxy-Region': 'ru-central',
+            }
+          },
+          {
+            'type': 'http',
+            'tag': 'https',
+            'server': 'secure-proxy.example.com',
+            'server_port': 8443,
+            'username': 'bob',
+            'password': 'hunter2',
+            'tls': {
+              'enabled': true,
+              'server_name': 'edge.example.com',
+              'alpn': ['h2'],
+              'utls': {'fingerprint': 'chrome'},
+            }
+          },
+          {
+            'type': 'http',
+            'tag': 'unsupported-path',
+            'server': 'ignored.example.com',
+            'server_port': 8081,
+            'path': '/proxy'
+          },
+        ]
+      }));
+
+      final httpConfig = decodedConfig(profiles.first);
+      final http = proxyOutbound(httpConfig);
+      final httpSettings = http['settings'] as Map<String, dynamic>;
+      final httpsConfig = decodedConfig(profiles.last);
+      final https = proxyOutbound(httpsConfig);
+      final stream = streamSettings(httpsConfig);
+      final tls = stream['tlsSettings'] as Map<String, dynamic>;
+
+      expect(profiles, hasLength(2));
+      expect(http['protocol'], 'http');
+      expect(http.containsKey('streamSettings'), isFalse);
+      expect(httpSettings['address'], 'proxy.example.com');
+      expect(httpSettings['port'], 8080);
+      expect(httpSettings['user'], 'alice');
+      expect(httpSettings['pass'], 'secret');
+      expect(httpSettings['headers'], {'X-Proxy-Region': 'ru-central'});
+      expect(https['protocol'], 'http');
+      expect(stream['network'], 'raw');
+      expect(stream['security'], 'tls');
+      expect(tls['serverName'], 'edge.example.com');
+      expect(tls['alpn'], ['h2']);
+      expect(tls['fingerprint'], 'chrome');
     });
   });
 }
