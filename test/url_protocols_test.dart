@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_vless/flutter_vless.dart';
+import 'package:flutter_vless/url/hysteria2.dart';
 import 'package:flutter_vless/url/shadowsocks.dart';
 import 'package:flutter_vless/url/socks.dart';
 import 'package:flutter_vless/url/trojan.dart';
@@ -107,6 +108,66 @@ void main() {
       expect(user['user'], 'user');
       expect(user['pass'], 'pass:with:colon');
     });
+
+    test('generates VLESS HTTPUpgrade outbound from a share link', () {
+      const link =
+          'vless://11111111-1111-1111-1111-111111111111@upgrade.example.com:443?type=httpupgrade&host=edge.example.com&path=/upgrade&security=tls&sni=edge.example.com#HTTPUpgrade';
+
+      final parsed = FlutterVless.parseFromURL(link);
+      final config = decodedConfig(parsed);
+      final stream = streamSettings(config);
+      final httpupgrade = stream['httpupgradeSettings'] as Map<String, dynamic>;
+
+      expect(stream['network'], 'httpupgrade');
+      expect(stream['security'], 'tls');
+      expect(httpupgrade['host'], 'edge.example.com');
+      expect(httpupgrade['path'], '/upgrade');
+    });
+
+    test('generates VLESS raw outbound from the modern transport name', () {
+      const link =
+          'vless://11111111-1111-1111-1111-111111111111@raw.example.com:443?type=raw&headerType=none&security=none#Raw';
+
+      final parsed = FlutterVless.parseFromURL(link);
+      final config = decodedConfig(parsed);
+      final stream = streamSettings(config);
+      final raw = stream['rawSettings'] as Map<String, dynamic>;
+
+      expect(stream['network'], 'raw');
+      expect(raw['header'], {'type': 'none'});
+    });
+
+    test('generates Hysteria2 outbound from a share link', () {
+      const link =
+          'hysteria2://secret@hy2.example.com:443?sni=edge.example.com&alpn=h3&insecure=1&pcs=e8e2d387fdbffeb38e9c9065cf30a97ee23c0e3d32ee6f78ffae40966befccc9&vcn=edge.example.com&udpIdleTimeout=120#HY2';
+
+      final parsed = FlutterVless.parseFromURL(link);
+      final config = decodedConfig(parsed);
+      final outbound = proxyOutbound(config);
+      final stream = streamSettings(config);
+      final tls = stream['tlsSettings'] as Map<String, dynamic>;
+      final hysteria = stream['hysteriaSettings'] as Map<String, dynamic>;
+
+      expect(parsed, isA<Hysteria2URL>());
+      expect(outbound['protocol'], 'hysteria');
+      expect(outbound['settings'], {
+        'version': 2,
+        'address': 'hy2.example.com',
+        'port': 443,
+      });
+      expect(stream['network'], 'hysteria');
+      expect(stream['security'], 'tls');
+      expect(tls['serverName'], 'edge.example.com');
+      expect(tls['alpn'], ['h3']);
+      expect(tls.containsKey('allowInsecure'), isFalse);
+      expect(
+        tls['pinnedPeerCertSha256'],
+        'e8e2d387fdbffeb38e9c9065cf30a97ee23c0e3d32ee6f78ffae40966befccc9',
+      );
+      expect(tls['verifyPeerCertByName'], 'edge.example.com');
+      expect(hysteria['auth'], 'secret');
+      expect(hysteria['udpIdleTimeout'], 120);
+    });
   });
 
   group('P1 compatibility URL forms', () {
@@ -156,7 +217,7 @@ void main() {
 
     test('rejects unknown share link schemes', () {
       expect(
-        () => FlutterVless.parseFromURL('hysteria2://example.com:443'),
+        () => FlutterVless.parseFromURL('tuic://example.com:443'),
         throwsArgumentError,
       );
     });

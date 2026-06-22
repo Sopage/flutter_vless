@@ -69,6 +69,43 @@ object XrayCoreManager {
         return candidate
     }
 
+    private fun normalizeRuntimeConfig(value: Any?): Any? {
+        return when (value) {
+            is JSONObject -> {
+                val normalized = JSONObject()
+                val aliases = mapOf(
+                    "xHTTPSettings" to "xhttpSettings",
+                    "httpUpgradeSettings" to "httpupgradeSettings",
+                    "splitHTTPSettings" to "splithttpSettings"
+                )
+                val keys = value.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    if (key == "allowInsecure") continue
+
+                    val targetKey = aliases[key] ?: key
+                    if (aliases.containsKey(key) && value.has(targetKey)) continue
+
+                    val normalizedValue = normalizeRuntimeConfig(value.opt(key))
+                    if (targetKey == "network" && normalizedValue is String) {
+                        normalized.put(targetKey, normalizedValue.lowercase())
+                    } else {
+                        normalized.put(targetKey, normalizedValue)
+                    }
+                }
+                normalized
+            }
+            is JSONArray -> {
+                val normalized = JSONArray()
+                for (i in 0 until value.length()) {
+                    normalized.put(normalizeRuntimeConfig(value.opt(i)))
+                }
+                normalized
+            }
+            else -> value
+        }
+    }
+
     private fun normalizeVlessOutbounds(configJson: JSONObject) {
         val outbounds = configJson.optJSONArray("outbounds") ?: return
         for (i in 0 until outbounds.length()) {
@@ -115,7 +152,9 @@ object XrayCoreManager {
     }
 
     internal fun buildRuntimeConfigJson(config: XrayConfig, filesDir: File): JSONObject {
-        val configJson = JSONObject(config.V2RAY_FULL_JSON_CONFIG)
+        val configJson = normalizeRuntimeConfig(
+            JSONObject(config.V2RAY_FULL_JSON_CONFIG)
+        ) as JSONObject
         normalizeVlessOutbounds(configJson)
         sanitizeLogPaths(configJson, filesDir)
 

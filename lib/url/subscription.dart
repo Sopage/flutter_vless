@@ -40,13 +40,13 @@ class VlessSubscriptionParser {
         return decodedLinks;
       }
 
-      final decodedYaml = _parseClashYaml(decoded, parseUrl);
+      final decodedYaml = _parseClashYaml(decoded, parseUrl, parseJson);
       if (decodedYaml.isNotEmpty) {
         return decodedYaml;
       }
     }
 
-    final clashYaml = _parseClashYaml(trimmed, parseUrl);
+    final clashYaml = _parseClashYaml(trimmed, parseUrl, parseJson);
     if (clashYaml.isNotEmpty) {
       return clashYaml;
     }
@@ -69,7 +69,7 @@ class VlessSubscriptionParser {
         return [parseJson(jsonEncode(decoded))];
       }
       if (_isSingBoxConfig(decoded)) {
-        return _parseSingBoxJson(decoded, parseUrl);
+        return _parseSingBoxJson(decoded, parseUrl, parseJson);
       }
       return [];
     }
@@ -84,6 +84,11 @@ class VlessSubscriptionParser {
             final url = _linkFromSingBoxOutbound(item);
             if (url != null) {
               configs.add(parseUrl(url));
+            } else {
+              final config = _xrayConfigFromSingBoxOutbound(item);
+              if (config != null) {
+                configs.add(parseJson(jsonEncode(config)));
+              }
             }
           }
         }
@@ -121,6 +126,7 @@ class VlessSubscriptionParser {
   static List<FlutterVlessURL> _parseSingBoxJson(
     Map<String, dynamic> config,
     FlutterVlessUrlParser parseUrl,
+    FlutterVlessURL Function(String json) parseJson,
   ) {
     final outbounds = config['outbounds'];
     if (outbounds is! List<dynamic>) {
@@ -135,6 +141,11 @@ class VlessSubscriptionParser {
       final link = _linkFromSingBoxOutbound(outbound);
       if (link != null) {
         parsed.add(parseUrl(link));
+        continue;
+      }
+      final xrayConfig = _xrayConfigFromSingBoxOutbound(outbound);
+      if (xrayConfig != null) {
+        parsed.add(parseJson(jsonEncode(xrayConfig)));
       }
     }
     return parsed;
@@ -160,7 +171,8 @@ class VlessSubscriptionParser {
 
   static bool _hasSupportedScheme(String value) {
     final scheme = value.split('://').first.toLowerCase();
-    return const {'vmess', 'vless', 'trojan', 'ss', 'socks'}.contains(scheme);
+    return const {'vmess', 'vless', 'trojan', 'ss', 'socks', 'hysteria2', 'hy2'}
+        .contains(scheme);
   }
 
   static String? _decodeBase64Subscription(String input) {
@@ -179,6 +191,7 @@ class VlessSubscriptionParser {
   static List<FlutterVlessURL> _parseClashYaml(
     String input,
     FlutterVlessUrlParser parseUrl,
+    FlutterVlessURL Function(String json) parseJson,
   ) {
     final root = _tryLoadYaml(input);
     if (root is! Map<String, dynamic>) {
@@ -198,6 +211,11 @@ class VlessSubscriptionParser {
       final link = _linkFromClashProxy(proxy);
       if (link != null) {
         parsed.add(parseUrl(link));
+        continue;
+      }
+      final config = _xrayConfigFromClashProxy(proxy);
+      if (config != null) {
+        parsed.add(parseJson(jsonEncode(config)));
       }
     }
     return parsed;
@@ -244,6 +262,21 @@ class VlessSubscriptionParser {
     }
   }
 
+  static Map<String, dynamic>? _xrayConfigFromClashProxy(
+    Map<String, dynamic> proxy,
+  ) {
+    final type = _string(proxy, 'type')?.toLowerCase();
+    switch (type) {
+      case 'wireguard':
+        return _wireGuardConfigFromClash(proxy);
+      case 'hysteria2':
+      case 'hy2':
+        return _hysteria2ConfigFromClash(proxy);
+      default:
+        return null;
+    }
+  }
+
   static String? _linkFromSingBoxOutbound(Map<String, dynamic> outbound) {
     final type = _string(outbound, 'type')?.toLowerCase();
     switch (type) {
@@ -260,6 +293,239 @@ class VlessSubscriptionParser {
       default:
         return null;
     }
+  }
+
+  static Map<String, dynamic>? _xrayConfigFromSingBoxOutbound(
+    Map<String, dynamic> outbound,
+  ) {
+    final type = _string(outbound, 'type')?.toLowerCase();
+    switch (type) {
+      case 'wireguard':
+        return _wireGuardConfigFromSingBox(outbound);
+      case 'hysteria2':
+        return _hysteria2ConfigFromSingBox(outbound);
+      default:
+        return null;
+    }
+  }
+
+  static Map<String, dynamic>? _wireGuardConfigFromClash(
+    Map<String, dynamic> proxy,
+  ) {
+    final server = _string(proxy, 'server');
+    final port = _int(proxy, 'port');
+    final secretKey = _firstString(proxy, const [
+      'private-key',
+      'private_key',
+      'secret-key',
+      'secretKey',
+    ]);
+    final publicKey = _firstString(proxy, const [
+      'public-key',
+      'public_key',
+      'peer-public-key',
+      'peer_public_key',
+    ]);
+    if (server == null ||
+        port == null ||
+        secretKey == null ||
+        publicKey == null) {
+      return null;
+    }
+
+    final settings = _wireGuardSettings(
+      secretKey: secretKey,
+      addresses: _wireGuardAddresses(
+        _listOfStrings(proxy['local-address']) ??
+            _listOfStrings(proxy['local_address']) ??
+            _listOfStrings(proxy['address']),
+        ipv4: _string(proxy, 'ip'),
+        ipv6: _string(proxy, 'ipv6'),
+      ),
+      peer: _wireGuardPeer(
+        endpoint: '$server:$port',
+        publicKey: publicKey,
+        preSharedKey: _firstString(proxy, const [
+          'pre-shared-key',
+          'pre_shared_key',
+          'preshared-key',
+          'preshared_key',
+        ]),
+        keepAlive: _firstInt(proxy, const [
+          'keepalive',
+          'keep-alive',
+          'persistent-keepalive',
+          'persistent_keepalive',
+        ]),
+        allowedIPs: _listOfStrings(proxy['allowed-ips']) ??
+            _listOfStrings(proxy['allowed_ips']),
+      ),
+      mtu: _int(proxy, 'mtu'),
+      workers: _int(proxy, 'workers'),
+      reserved: _reservedToBase64(proxy['reserved']),
+      domainStrategy: _domainStrategy(
+        _string(proxy, 'domain-strategy') ?? _string(proxy, 'domain_strategy'),
+      ),
+      noKernelTun:
+          _bool(proxy, 'no-kernel-tun') ?? _bool(proxy, 'no_kernel_tun'),
+    );
+
+    return _fullXrayConfig(
+      remark: _string(proxy, 'name') ?? server,
+      outbound: {
+        'tag': 'proxy',
+        'protocol': 'wireguard',
+        'settings': settings,
+      },
+    );
+  }
+
+  static Map<String, dynamic>? _wireGuardConfigFromSingBox(
+    Map<String, dynamic> outbound,
+  ) {
+    final server = _string(outbound, 'server');
+    final port = _int(outbound, 'server_port');
+    final secretKey = _string(outbound, 'private_key');
+    final publicKey = _string(outbound, 'peer_public_key');
+    if (server == null ||
+        port == null ||
+        secretKey == null ||
+        publicKey == null) {
+      return null;
+    }
+
+    final settings = _wireGuardSettings(
+      secretKey: secretKey,
+      addresses: _listOfStrings(outbound['local_address']) ??
+          _listOfStrings(outbound['address']),
+      peer: _wireGuardPeer(
+        endpoint: '$server:$port',
+        publicKey: publicKey,
+        preSharedKey: _string(outbound, 'pre_shared_key'),
+        keepAlive: _firstInt(outbound, const [
+          'persistent_keepalive_interval',
+          'keep_alive',
+          'keepalive',
+        ]),
+        allowedIPs: _listOfStrings(outbound['allowed_ips']),
+      ),
+      mtu: _int(outbound, 'mtu'),
+      workers: _int(outbound, 'workers'),
+      reserved: _reservedToBase64(outbound['reserved']),
+      domainStrategy: _domainStrategy(_string(outbound, 'domain_strategy')),
+      noKernelTun: _bool(outbound, 'no_kernel_tun'),
+    );
+
+    return _fullXrayConfig(
+      remark: _string(outbound, 'tag') ?? server,
+      outbound: {
+        'tag': 'proxy',
+        'protocol': 'wireguard',
+        'settings': settings,
+      },
+    );
+  }
+
+  static Map<String, dynamic>? _hysteria2ConfigFromClash(
+    Map<String, dynamic> proxy,
+  ) {
+    return _hysteria2ConfigFromFields(
+      remark: _string(proxy, 'name'),
+      server: _string(proxy, 'server'),
+      port: _int(proxy, 'port'),
+      auth: _string(proxy, 'password') ?? _string(proxy, 'auth'),
+      sni: _string(proxy, 'sni') ?? _string(proxy, 'servername'),
+      alpn: _stringOrList(proxy['alpn']),
+      fingerprint: _string(proxy, 'client-fingerprint'),
+      pinnedPeerCertSha256: _firstString(proxy, const [
+        'pcs',
+        'pinned-peer-cert-sha256',
+        'pinnedPeerCertSha256',
+      ]),
+      verifyPeerCertByName: _firstString(proxy, const [
+        'vcn',
+        'verify-peer-cert-by-name',
+        'verifyPeerCertByName',
+      ]),
+      udpIdleTimeout: _int(proxy, 'udp-idle-timeout'),
+    );
+  }
+
+  static Map<String, dynamic>? _hysteria2ConfigFromSingBox(
+    Map<String, dynamic> outbound,
+  ) {
+    final tls = _map(outbound, 'tls');
+    return _hysteria2ConfigFromFields(
+      remark: _string(outbound, 'tag'),
+      server: _string(outbound, 'server'),
+      port: _int(outbound, 'server_port'),
+      auth: _string(outbound, 'password') ?? _string(outbound, 'auth'),
+      sni: _string(tls, 'server_name'),
+      alpn: _stringOrList(tls?['alpn']),
+      fingerprint: _string(_map(tls, 'utls'), 'fingerprint'),
+      pinnedPeerCertSha256: _firstString(tls ?? const {}, const [
+        'pcs',
+        'pinned_peer_cert_sha256',
+        'pinnedPeerCertSha256',
+      ]),
+      verifyPeerCertByName: _firstString(tls ?? const {}, const [
+        'vcn',
+        'verify_peer_cert_by_name',
+        'verifyPeerCertByName',
+      ]),
+      udpIdleTimeout: _int(outbound, 'udp_idle_timeout'),
+    );
+  }
+
+  static Map<String, dynamic>? _hysteria2ConfigFromFields({
+    required String? remark,
+    required String? server,
+    required int? port,
+    required String? auth,
+    required String? sni,
+    required String? alpn,
+    required String? fingerprint,
+    required String? pinnedPeerCertSha256,
+    required String? verifyPeerCertByName,
+    required int? udpIdleTimeout,
+  }) {
+    if (server == null || port == null || auth == null) {
+      return null;
+    }
+
+    final tlsSettings = <String, dynamic>{
+      'serverName': sni ?? server,
+      if (alpn != null) 'alpn': alpn.split(','),
+      if (fingerprint != null) 'fingerprint': fingerprint,
+      if (pinnedPeerCertSha256 != null)
+        'pinnedPeerCertSha256': pinnedPeerCertSha256,
+      if (verifyPeerCertByName != null)
+        'verifyPeerCertByName': verifyPeerCertByName,
+    };
+    final hysteriaSettings = <String, dynamic>{
+      'version': 2,
+      'auth': auth,
+      if (udpIdleTimeout != null) 'udpIdleTimeout': udpIdleTimeout,
+    };
+
+    return _fullXrayConfig(
+      remark: remark ?? server,
+      outbound: {
+        'tag': 'proxy',
+        'protocol': 'hysteria',
+        'settings': {
+          'version': 2,
+          'address': server,
+          'port': port,
+        },
+        'streamSettings': {
+          'network': 'hysteria',
+          'security': 'tls',
+          'tlsSettings': tlsSettings,
+          'hysteriaSettings': hysteriaSettings,
+        },
+      },
+    );
   }
 
   static String? _vlessFromClash(Map<String, dynamic> proxy) {
@@ -528,6 +794,13 @@ class VlessSubscriptionParser {
     _addIfPresent(query, 'path', _transportPath(network, proxy));
     _addIfPresent(query, 'serviceName', _grpcServiceName(proxy));
     _addIfPresent(query, 'mode', _string(_map(proxy, 'xhttp-opts'), 'mode'));
+    if (network == 'httpupgrade') {
+      _addIfPresent(
+        query,
+        'extra',
+        _extraWithHeaders(_httpUpgradeHeadersFromClash(proxy)),
+      );
+    }
   }
 
   static void _addSingBoxTransportOptions(
@@ -541,6 +814,13 @@ class VlessSubscriptionParser {
     if (network == 'xhttp') {
       _addIfPresent(query, 'mode', _string(transport, 'mode'));
     }
+    if (network == 'httpupgrade') {
+      _addIfPresent(
+        query,
+        'extra',
+        _extraWithHeaders(_httpUpgradeHeadersFromSingBox(transport)),
+      );
+    }
   }
 
   static String? _transportHost(String network, Map<String, dynamic> proxy) {
@@ -551,6 +831,12 @@ class VlessSubscriptionParser {
     if (network == 'xhttp') {
       return _string(_map(proxy, 'xhttp-opts'), 'host') ??
           _string(_map(proxy, 'xhttp_opts'), 'host');
+    }
+    if (network == 'httpupgrade') {
+      final headers = _stringMap(_map(_httpUpgradeOptions(proxy), 'headers'));
+      return _string(_httpUpgradeOptions(proxy), 'host') ??
+          _string(headers, 'Host') ??
+          _string(headers, 'host');
     }
     if (network == 'grpc') {
       return _string(proxy, 'servername') ?? _string(proxy, 'sni');
@@ -566,6 +852,9 @@ class VlessSubscriptionParser {
       return _string(_map(proxy, 'xhttp-opts'), 'path') ??
           _string(_map(proxy, 'xhttp_opts'), 'path');
     }
+    if (network == 'httpupgrade') {
+      return _string(_httpUpgradeOptions(proxy), 'path');
+    }
     if (network == 'h2' || network == 'http') {
       return _string(_map(proxy, 'h2-opts'), 'path') ??
           _string(_map(proxy, 'http-opts'), 'path');
@@ -579,6 +868,50 @@ class VlessSubscriptionParser {
         _string(_map(proxy, 'grpc_opts'), 'service_name');
   }
 
+  static Map<String, dynamic>? _httpUpgradeOptions(
+    Map<String, dynamic> proxy,
+  ) {
+    return _map(proxy, 'httpupgrade-opts') ??
+        _map(proxy, 'httpupgrade_opts') ??
+        _map(proxy, 'http-upgrade-opts') ??
+        _map(proxy, 'http_upgrade_opts');
+  }
+
+  static Map<String, dynamic>? _httpUpgradeHeadersFromClash(
+    Map<String, dynamic> proxy,
+  ) {
+    return _headersWithoutHost(
+        _stringMap(_map(_httpUpgradeOptions(proxy), 'headers')));
+  }
+
+  static Map<String, dynamic>? _httpUpgradeHeadersFromSingBox(
+    Map<String, dynamic>? transport,
+  ) {
+    return _headersWithoutHost(_stringMap(_map(transport, 'headers')));
+  }
+
+  static String? _extraWithHeaders(Map<String, dynamic>? headers) {
+    if (headers == null || headers.isEmpty) {
+      return null;
+    }
+    return jsonEncode({'headers': headers});
+  }
+
+  static Map<String, dynamic>? _headersWithoutHost(
+    Map<String, dynamic>? headers,
+  ) {
+    if (headers == null) {
+      return null;
+    }
+    final filtered = <String, dynamic>{};
+    headers.forEach((key, value) {
+      if (key.toLowerCase() != 'host') {
+        filtered[key] = value;
+      }
+    });
+    return filtered.isEmpty ? null : filtered;
+  }
+
   static String _singBoxTransportType(Map<String, dynamic>? transport) {
     final type = _string(transport, 'type')?.toLowerCase();
     switch (type) {
@@ -586,12 +919,176 @@ class VlessSubscriptionParser {
         return 'ws';
       case 'http':
         return 'h2';
+      case 'raw':
+      case 'tcp':
+        return type!;
+      case 'mkcp':
+        return 'kcp';
+      case 'httpupgrade':
+      case 'http_upgrade':
+        return 'httpupgrade';
       case 'grpc':
       case 'quic':
       case 'xhttp':
         return type!;
       default:
         return 'tcp';
+    }
+  }
+
+  static Map<String, dynamic> _fullXrayConfig({
+    required String remark,
+    required Map<String, dynamic> outbound,
+  }) {
+    return {
+      'remarks': remark,
+      'log': {'loglevel': 'error'},
+      'inbounds': [
+        {
+          'tag': 'in_proxy',
+          'listen': '127.0.0.1',
+          'port': 10807,
+          'protocol': 'socks',
+          'settings': {
+            'auth': 'noauth',
+            'udp': true,
+            'userLevel': 8,
+          },
+          'sniffing': {
+            'enabled': true,
+            'destOverride': ['http', 'tls', 'quic'],
+            'metadataOnly': false,
+          },
+        }
+      ],
+      'outbounds': [
+        outbound,
+        {
+          'tag': 'direct',
+          'protocol': 'freedom',
+          'settings': {'domainStrategy': 'AsIs'},
+        },
+        {
+          'tag': 'blackhole',
+          'protocol': 'blackhole',
+          'settings': <String, dynamic>{},
+        },
+      ],
+      'routing': {
+        'domainStrategy': 'AsIs',
+        'rules': <dynamic>[],
+        'balancers': <dynamic>[],
+      },
+    };
+  }
+
+  static Map<String, dynamic> _wireGuardSettings({
+    required String secretKey,
+    required List<String>? addresses,
+    required Map<String, dynamic> peer,
+    required int? mtu,
+    required int? workers,
+    required String? reserved,
+    required String? domainStrategy,
+    required bool? noKernelTun,
+  }) {
+    return {
+      'secretKey': secretKey,
+      if (addresses != null && addresses.isNotEmpty) 'address': addresses,
+      'peers': [peer],
+      if (mtu != null) 'mtu': mtu,
+      if (workers != null) 'workers': workers,
+      if (reserved != null) 'reserved': reserved,
+      if (domainStrategy != null) 'domainStrategy': domainStrategy,
+      if (noKernelTun != null) 'noKernelTun': noKernelTun,
+    };
+  }
+
+  static Map<String, dynamic> _wireGuardPeer({
+    required String endpoint,
+    required String publicKey,
+    required String? preSharedKey,
+    required int? keepAlive,
+    required List<String>? allowedIPs,
+  }) {
+    return {
+      'publicKey': publicKey,
+      'endpoint': endpoint,
+      if (preSharedKey != null) 'preSharedKey': preSharedKey,
+      if (keepAlive != null) 'keepAlive': keepAlive,
+      if (allowedIPs != null && allowedIPs.isNotEmpty) 'allowedIPs': allowedIPs,
+    };
+  }
+
+  static List<String>? _wireGuardAddresses(
+    List<String>? addresses, {
+    required String? ipv4,
+    required String? ipv6,
+  }) {
+    final merged = <String>[
+      ...?addresses,
+      if (ipv4 != null) ipv4,
+      if (ipv6 != null) ipv6,
+    ];
+    return merged.isEmpty ? null : merged;
+  }
+
+  static String? _reservedToBase64(Object? value) {
+    if (value == null) {
+      return null;
+    }
+    if (value is List<dynamic>) {
+      final bytes = <int>[];
+      for (final item in value) {
+        final byte = item is int ? item : int.tryParse(item.toString());
+        if (byte == null || byte < 0 || byte > 255) {
+          return null;
+        }
+        bytes.add(byte);
+      }
+      return bytes.isEmpty ? null : base64Encode(bytes);
+    }
+    final text = value.toString().trim();
+    if (text.isEmpty) {
+      return null;
+    }
+    final commaBytes = text
+        .split(RegExp(r'[\s,]+'))
+        .where((part) => part.isNotEmpty)
+        .map(int.tryParse)
+        .toList();
+    if (commaBytes.length == 3 && commaBytes.every((byte) => byte != null)) {
+      return base64Encode(commaBytes.cast<int>());
+    }
+    return text;
+  }
+
+  static String? _domainStrategy(String? value) {
+    if (value == null) {
+      return null;
+    }
+    switch (value.toLowerCase().replaceAll('-', '_')) {
+      case 'forceip':
+      case 'force_ip':
+        return 'ForceIP';
+      case 'forceipv4':
+      case 'force_ipv4':
+      case 'ipv4_only':
+        return 'ForceIPv4';
+      case 'forceipv6':
+      case 'force_ipv6':
+      case 'ipv6_only':
+        return 'ForceIPv6';
+      case 'forceipv4v6':
+      case 'force_ipv4v6':
+      case 'prefer_ipv4':
+        return 'ForceIPv4v6';
+      case 'forceipv6v4':
+      case 'force_ipv6v4':
+      case 'prefer_ipv6':
+        return 'ForceIPv6v4';
+      default:
+        return value;
     }
   }
 
@@ -654,6 +1151,69 @@ class VlessSubscriptionParser {
     }
     final text = value.toString();
     return text.isEmpty ? null : text;
+  }
+
+  static String? _firstString(
+    Map<String, dynamic> source,
+    List<String> keys,
+  ) {
+    for (final key in keys) {
+      final value = _string(source, key);
+      if (value != null) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  static int? _firstInt(Map<String, dynamic> source, List<String> keys) {
+    for (final key in keys) {
+      final value = _int(source, key);
+      if (value != null) {
+        return value;
+      }
+    }
+    return null;
+  }
+
+  static List<String>? _listOfStrings(Object? value) {
+    if (value is List<dynamic>) {
+      final values = value
+          .map((item) => item.toString())
+          .where((item) => item.isNotEmpty)
+          .toList();
+      return values.isEmpty ? null : values;
+    }
+    if (value is String) {
+      final text = value.trim();
+      if (text.isEmpty) {
+        return null;
+      }
+      if (text.contains(',')) {
+        final values = text
+            .split(',')
+            .map((item) => item.trim())
+            .where((item) => item.isNotEmpty)
+            .toList();
+        return values.isEmpty ? null : values;
+      }
+      return [text];
+    }
+    return null;
+  }
+
+  static Map<String, dynamic>? _stringMap(Object? value) {
+    if (value is! Map) {
+      return null;
+    }
+    final result = <String, dynamic>{};
+    value.forEach((key, item) {
+      final text = item?.toString();
+      if (text != null && text.isNotEmpty) {
+        result[key.toString()] = text;
+      }
+    });
+    return result.isEmpty ? null : result;
   }
 
   static int? _int(Map<String, dynamic> source, String key) {

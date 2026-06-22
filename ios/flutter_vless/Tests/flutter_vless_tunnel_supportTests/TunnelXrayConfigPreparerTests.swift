@@ -41,9 +41,10 @@ final class TunnelXrayConfigPreparerTests: XCTestCase {
                         ]
                     ],
                     "streamSettings": [
-                        "network": "xhttp",
+                        "network": "XHTTP",
                         "security": "none",
-                        "xhttpSettings": [
+                        "tlsSettings": ["allowInsecure": false],
+                        "xHTTPSettings": [
                             "host": "s3.storage.selcloud.ru",
                             "path": "/my-bucket",
                             "mode": "stream-up"
@@ -79,6 +80,10 @@ final class TunnelXrayConfigPreparerTests: XCTestCase {
         XCTAssertEqual(routing["domainStrategy"] as? String, "AsIs")
         XCTAssertEqual(users[0]["encryption"] as? String, Self.vlessEncryption)
         XCTAssertEqual(vnext[0]["address"] as? String, "proxy.example.com")
+        XCTAssertEqual(streamSettings["network"] as? String, "xhttp")
+        XCTAssertNil(streamSettings["xHTTPSettings"])
+        XCTAssertNotNil(streamSettings["xhttpSettings"])
+        XCTAssertNil((streamSettings["tlsSettings"] as? [String: Any])?["allowInsecure"])
         XCTAssertNil(streamSettings["sockopt"])
         XCTAssertEqual(rules.first?["network"] as? String, "udp")
         XCTAssertEqual(String(describing: rules.first?["port"] ?? ""), "443")

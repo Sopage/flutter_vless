@@ -74,7 +74,7 @@ setup, and Windows needs `example/windows/xray/xray.exe`.
 
 ```yaml
 dependencies:
-  flutter_vless: ^1.1.2
+  flutter_vless: ^1.1.3
 ```
 
 Then run:
@@ -132,10 +132,15 @@ well-formed Xray JSON object before the native layer sees it.
 - `trojan://`
 - `ss://`
 - `socks://`
+- `hysteria2://`
+- `hy2://`
 - raw Xray JSON
 - base64 subscription payloads
 - Clash YAML
 - sing-box JSON
+
+Clash YAML and sing-box JSON imports also cover supported Xray profile objects
+such as WireGuard and Hysteria2.
 
 Use `parse()` for a single share link or a raw config, and `parseMany()` when you want to keep every supported profile from a subscription payload.
 
@@ -174,6 +179,7 @@ The bundled example app shows clipboard import, routing edits, proxy-only mode, 
 - [Compatibility](doc/compatibility.md)
 - [Security](doc/security.md)
 - [Architecture Notes](doc/architecture.md)
+- [Protocol Support Roadmap](doc/protocol_support_roadmap.md)
 - [Real-Device VPN Matrix](doc/device_matrix.md)
 - [Troubleshooting](doc/troubleshooting.md)
 

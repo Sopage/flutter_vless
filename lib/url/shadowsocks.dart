@@ -43,6 +43,10 @@ class ShadowSocksURL extends FlutterVlessURL {
         publicKey: null,
         shortId: null,
         spiderX: null,
+        pinnedPeerCertSha256: uri.queryParameters["pcs"] ??
+            uri.queryParameters["pinnedPeerCertSha256"],
+        verifyPeerCertByName: uri.queryParameters["vcn"] ??
+            uri.queryParameters["verifyPeerCertByName"],
       );
     }
   }

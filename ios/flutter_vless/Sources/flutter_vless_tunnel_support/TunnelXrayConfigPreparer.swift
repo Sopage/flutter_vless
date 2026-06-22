@@ -106,7 +106,8 @@ public enum TunnelXrayConfigPreparer {
                         continue
                     }
                     var streamSettings = outbounds[index]["streamSettings"] as? [String: Any] ?? [:]
-                    let network = streamSettings["network"] as? String ?? "?"
+                    normalizeStreamSettingsAliases(streamSettings: &streamSettings, messages: &messages)
+                    let network = (streamSettings["network"] as? String ?? "?").lowercased()
                     let security = streamSettings["security"] as? String ?? "?"
                     proxyUsesXhttp = network == "xhttp"
 
@@ -261,6 +262,45 @@ public enum TunnelXrayConfigPreparer {
         }
 
         return false
+    }
+
+    private static func normalizeStreamSettingsAliases(
+        streamSettings: inout [String: Any],
+        messages: inout [String]
+    ) {
+        if let network = streamSettings["network"] as? String {
+            let normalizedNetwork = network.lowercased()
+            if normalizedNetwork != network {
+                streamSettings["network"] = normalizedNetwork
+            }
+        }
+
+        if let legacyXhttpSettings = streamSettings.removeValue(forKey: "xHTTPSettings") {
+            if streamSettings["xhttpSettings"] == nil {
+                streamSettings["xhttpSettings"] = legacyXhttpSettings
+                messages.append("Normalized xHTTPSettings to xhttpSettings for Xray XHTTP transport")
+            }
+        }
+
+        if let legacyHTTPUpgradeSettings = streamSettings.removeValue(forKey: "httpUpgradeSettings") {
+            if streamSettings["httpupgradeSettings"] == nil {
+                streamSettings["httpupgradeSettings"] = legacyHTTPUpgradeSettings
+                messages.append("Normalized httpUpgradeSettings to httpupgradeSettings for Xray HTTPUpgrade transport")
+            }
+        }
+
+        if let legacySplitHTTPSettings = streamSettings.removeValue(forKey: "splitHTTPSettings") {
+            if streamSettings["splithttpSettings"] == nil {
+                streamSettings["splithttpSettings"] = legacySplitHTTPSettings
+                messages.append("Normalized splitHTTPSettings to splithttpSettings for Xray SplitHTTP transport")
+            }
+        }
+
+        if var tlsSettings = streamSettings["tlsSettings"] as? [String: Any],
+           tlsSettings.removeValue(forKey: "allowInsecure") != nil {
+            streamSettings["tlsSettings"] = tlsSettings
+            messages.append("Removed deprecated tlsSettings.allowInsecure for Xray 26.x")
+        }
     }
 
     private static func shouldResolve(_ address: String) -> Bool {

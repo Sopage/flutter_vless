@@ -1,5 +1,9 @@
 ## 1.1.3
 
+* Fixed macOS VPN mode for VLESS + XHTTP + TLS Packet Tunnel configs by matching the validated Apple route model: `tunnelRemoteAddress = 127.0.0.1`, `198.18.0.1/24` local TUN address, default route gateway `198.18.0.1`, explicit Packet Tunnel DNS, and no DNS host-route exclusions.
+* Added macOS route/DNS diagnostics that distinguish a healthy Xray/SOCKS path from a broken app-side `utun` route, including raw TCP probes bound to the selected interface.
+* Documented the working macOS Packet Tunnel invariants and golden log lines in `doc/macos_packet_tunnel_architecture.md` so future route/DNS changes do not regress the VLESS XHTTP path.
+* Added subscription import coverage and documentation for WireGuard, Hysteria2 / `hy2`, HTTPUpgrade, and modern raw transport mappings.
 * Fixed macOS SwiftPM builds by updating the macOS package dependency to the release that explicitly imports the `CXRay` shim.
 * Fixed repeated macOS Packet Tunnel setup so existing Xcode and generated SwiftPM package references update their paths to versioned hosted package symlinks.
 

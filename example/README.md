@@ -45,8 +45,13 @@ iOS tunnel mode requires a signed real device.
 ```bash
 cd example
 flutter pub get
+../tool/prepare_apple_swiftpm.sh
 open ios/Runner.xcworkspace
 ```
+
+Open `Runner.xcworkspace`, not `Runner.xcodeproj`. The example still has
+CocoaPods integration metadata, and opening the project file directly can make
+Xcode miss generated package/framework products.
 
 In Xcode:
 
@@ -68,8 +73,12 @@ macOS tunnel mode requires the Packet Tunnel target and signing setup.
 ```bash
 cd example
 flutter pub get
+../tool/prepare_apple_swiftpm.sh
 open macos/Runner.xcworkspace
 ```
+
+Open `Runner.xcworkspace`, not `Runner.xcodeproj`. The project file alone can
+fail with stale SwiftPM platform metadata or `Pods_Runner` linker errors.
 
 Set your Apple Team on both macOS targets, then run from Xcode or:
 
@@ -79,6 +88,11 @@ flutter run -d macos
 
 Read `doc/macos_packet_tunnel_architecture.md` before changing macOS routing,
 DNS, or Packet Tunnel behavior.
+
+If Xcode reports that `flutter-vless` or `flutter-vless-macos` requires a
+higher minimum platform than `FlutterGeneratedPluginSwiftPackage`, run
+`../tool/prepare_apple_swiftpm.sh` again and reopen the workspace. The generated
+Flutter Swift package lives under `Flutter/ephemeral/` and is not committed.
 
 ## Windows
 

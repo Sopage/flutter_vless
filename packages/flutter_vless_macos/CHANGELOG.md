@@ -1,5 +1,8 @@
 ## 1.1.3
 
+* Fixed macOS Packet Tunnel VPN routing for VLESS + XHTTP + TLS configs by using the validated local TUN gateway model (`127.0.0.1` remote label, `198.18.0.1/24` local address, default gateway `198.18.0.1`).
+* Published explicit Packet Tunnel DNS with `matchDomains = [""]` and kept DNS host-route exclusions disabled for the working macOS route model.
+* Added provider/app diagnostics for raw `utun` TCP reachability, interface-bound probes, HEV fd selection, Xray/SOCKS health checks, and expanded shared provider logs.
 * Fixed macOS SwiftPM builds by explicitly importing the `CXRay` shim before using `XRayLoggerProtocol`.
 
 ## 1.1.2

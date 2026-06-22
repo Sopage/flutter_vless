@@ -35,6 +35,10 @@ class VlessURL extends FlutterVlessURL {
       publicKey: uri.queryParameters["pbk"] ?? "",
       shortId: uri.queryParameters["sid"] ?? "",
       spiderX: uri.queryParameters["spx"] ?? "",
+      pinnedPeerCertSha256: uri.queryParameters["pcs"] ??
+          uri.queryParameters["pinnedPeerCertSha256"],
+      verifyPeerCertByName: uri.queryParameters["vcn"] ??
+          uri.queryParameters["verifyPeerCertByName"],
     );
   }
 

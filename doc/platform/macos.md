@@ -58,6 +58,8 @@ That note explains the routing, DNS, and packet-tunnel invariants that matter wh
 
 - proxy-only mode and tunnel mode are different code paths
 - the packet tunnel is more sensitive to DNS and route configuration than a normal proxy-only start
+- the validated Packet Tunnel route model uses `127.0.0.1` as the Network Extension remote label, `198.18.0.1/24` as the local TUN address, `198.18.0.1` as the default route gateway, explicit DNS servers `1.1.1.1` and `8.8.8.8`, and no DNS host-route exclusions
+- a healthy VPN run should include `Packet tunnel DNS servers=1.1.1.1,8.8.8.8 matchDomains=default`, `SOCKS URLSession HTTPS health check: ok status=204`, and app-side raw TCP probes through the selected `utun`
 - use the architecture note before changing packet tunnel logic
 
 ## PacketTunnelProvider.swift

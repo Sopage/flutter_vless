@@ -163,7 +163,8 @@ public enum TunnelXrayConfigPreparer {
                     proxyOutboundTag = candidateTag
 
                     var streamSettings = outbounds[index]["streamSettings"] as? [String: Any] ?? [:]
-                    let network = streamSettings["network"] as? String ?? "?"
+                    normalizeStreamSettingsAliases(streamSettings: &streamSettings, messages: &messages)
+                    let network = (streamSettings["network"] as? String)?.lowercased() ?? "?"
                     proxyUsesXhttp = network == "xhttp"
 
                     if let serverAddress = parseServerAddress(configJSON: ["outbounds": [outbounds[index]]]),
@@ -386,6 +387,8 @@ public enum TunnelXrayConfigPreparer {
 
         var hasSocksInbound = false
         var changedSocksInbound = false
+        var tunnelInboundTag: String?
+        var fallbackHTTPInboundTag: String?
         var localInboundTags: [String] = []
         for index in inbounds.indices {
             let protocolType = inbounds[index]["protocol"] as? String
@@ -404,11 +407,17 @@ public enum TunnelXrayConfigPreparer {
             inbounds[index]["listen"] = "127.0.0.1"
             inbounds[index]["sniffing"] = sniffing
 
+            if protocolType == "http", fallbackHTTPInboundTag == nil {
+                fallbackHTTPInboundTag = localInboundTags.last
+            }
             guard protocolType == "socks" else {
                 continue
             }
 
             hasSocksInbound = true
+            if tunnelInboundTag == nil {
+                tunnelInboundTag = localInboundTags.last
+            }
             let oldSettings = inbounds[index]["settings"] as? [String: Any] ?? [:]
             var settings: [String: Any] = ["auth": "noauth", "udp": true]
             if let userLevel = oldSettings["userLevel"] as? Int {
@@ -431,14 +440,59 @@ public enum TunnelXrayConfigPreparer {
                 "settings": ["auth": "noauth", "udp": true],
                 "sniffing": sniffing
             ], at: 0)
-            localInboundTags.insert(tag, at: 0)
+            tunnelInboundTag = tag
             messages.append("Injected local SOCKS inbound for packet tunnel on port \(port)")
         } else if changedSocksInbound {
             messages.append("Enabled UDP/noauth on local SOCKS inbound for packet tunnel")
         }
 
         configJSON["inbounds"] = inbounds
-        return localInboundTags
+        return [tunnelInboundTag ?? fallbackHTTPInboundTag].compactMap { $0 }
+    }
+
+    /// Normalizes common app-export key variants to Xray's canonical JSON keys.
+    ///
+    /// Happ exports XHTTP as `xHTTPSettings`, while Xray's config struct expects
+    /// `xhttpSettings`. Without this alias, Xray silently falls back to default
+    /// XHTTP settings and imported configs no longer mean exactly what the user
+    /// tested in the source client.
+    private static func normalizeStreamSettingsAliases(
+        streamSettings: inout [String: Any],
+        messages: inout [String]
+    ) {
+        if let network = streamSettings["network"] as? String {
+            let normalizedNetwork = network.lowercased()
+            if normalizedNetwork != network {
+                streamSettings["network"] = normalizedNetwork
+            }
+        }
+
+        if let legacyXhttpSettings = streamSettings.removeValue(forKey: "xHTTPSettings") {
+            if streamSettings["xhttpSettings"] == nil {
+                streamSettings["xhttpSettings"] = legacyXhttpSettings
+                messages.append("Normalized xHTTPSettings to xhttpSettings for Xray XHTTP transport")
+            }
+        }
+
+        if let legacyHTTPUpgradeSettings = streamSettings.removeValue(forKey: "httpUpgradeSettings") {
+            if streamSettings["httpupgradeSettings"] == nil {
+                streamSettings["httpupgradeSettings"] = legacyHTTPUpgradeSettings
+                messages.append("Normalized httpUpgradeSettings to httpupgradeSettings for Xray HTTPUpgrade transport")
+            }
+        }
+
+        if let legacySplitHTTPSettings = streamSettings.removeValue(forKey: "splitHTTPSettings") {
+            if streamSettings["splithttpSettings"] == nil {
+                streamSettings["splithttpSettings"] = legacySplitHTTPSettings
+                messages.append("Normalized splitHTTPSettings to splithttpSettings for Xray SplitHTTP transport")
+            }
+        }
+
+        if var tlsSettings = streamSettings["tlsSettings"] as? [String: Any],
+           tlsSettings.removeValue(forKey: "allowInsecure") != nil {
+            streamSettings["tlsSettings"] = tlsSettings
+            messages.append("Removed deprecated tlsSettings.allowInsecure for Xray 26.x")
+        }
     }
 
     private static func nextAvailablePort(preferred: Int, inbounds: [[String: Any]]) -> Int {

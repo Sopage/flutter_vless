@@ -12,11 +12,14 @@ flows:
 - Trojan
 - Shadowsocks
 - SOCKS
+- WireGuard import from Clash YAML and sing-box JSON
+- Hysteria2 import from share links, Clash YAML, and sing-box JSON
 - raw Xray JSON
 - supported Clash YAML and sing-box import paths
 
-It is not a general sing-box runtime. sing-box-only protocols that cannot be
-represented as Xray config are skipped by the parser.
+Runtime support for newer protocols still depends on the packaged or supplied
+Xray artifact on each platform. Validate generated configs against the target
+artifact before release.
 
 ## Platform Matrix
 

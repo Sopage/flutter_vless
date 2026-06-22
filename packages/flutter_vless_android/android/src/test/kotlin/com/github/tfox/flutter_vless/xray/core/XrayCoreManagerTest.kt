@@ -6,6 +6,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -209,6 +210,76 @@ class XrayCoreManagerTest {
         assertEquals("xtls-rprx-vision", user.getString("flow"))
         assertTrue(output.getJSONObject("log").getString("access").endsWith("access.log"))
         assertTrue(output.has("api"))
+    }
+
+    @Test
+    fun buildRuntimeConfigJson_normalizesXray26RuntimeAliases() {
+        val filesDir = File("build/test-files/android-aliases")
+        val config = XrayConfig(
+            V2RAY_FULL_JSON_CONFIG = """
+                {
+                  "log": {
+                    "access": "/Users/example/access.log",
+                    "error": "/Users/example/error.log"
+                  },
+                  "inbounds": [],
+                  "outbounds": [
+                    {
+                      "protocol": "vless",
+                      "settings": {
+                        "vnext": [
+                          {
+                            "address": "example.com",
+                            "port": 443,
+                            "users": [
+                              {
+                                "id": "11111111-1111-4111-8111-111111111111",
+                                "encryption": "none"
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      "streamSettings": {
+                        "network": "XHTTP",
+                        "security": "tls",
+                        "tlsSettings": {
+                          "allowInsecure": false,
+                          "serverName": "example.com"
+                        },
+                        "xHTTPSettings": {
+                          "path": "/",
+                          "mode": "auto"
+                        },
+                        "httpUpgradeSettings": {
+                          "path": "/upgrade"
+                        },
+                        "splitHTTPSettings": {
+                          "path": "/split"
+                        }
+                      }
+                    }
+                  ]
+                }
+            """.trimIndent()
+        )
+
+        val runtime = XrayCoreManager.buildRuntimeConfigJson(config, filesDir)
+        val stream = runtime
+            .getJSONArray("outbounds")
+            .getJSONObject(0)
+            .getJSONObject("streamSettings")
+
+        assertEquals("xhttp", stream.getString("network"))
+        assertNotNull(stream.optJSONObject("xhttpSettings"))
+        assertNotNull(stream.optJSONObject("httpupgradeSettings"))
+        assertNotNull(stream.optJSONObject("splithttpSettings"))
+        assertFalse(stream.has("xHTTPSettings"))
+        assertFalse(stream.has("httpUpgradeSettings"))
+        assertFalse(stream.has("splitHTTPSettings"))
+        assertFalse(stream.getJSONObject("tlsSettings").has("allowInsecure"))
+        assertEquals(File(filesDir, "access.log").absolutePath, runtime.getJSONObject("log").getString("access"))
+        assertEquals(File(filesDir, "error.log").absolutePath, runtime.getJSONObject("log").getString("error"))
     }
 
     private fun findInbound(inbounds: JSONArray, tag: String): JSONObject {

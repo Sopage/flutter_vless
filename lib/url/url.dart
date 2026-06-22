@@ -6,7 +6,7 @@ abstract class FlutterVlessURL {
   FlutterVlessURL({required this.url});
   final String url;
 
-  bool get allowInsecure => true;
+  bool get allowInsecure => false;
   String get security => "auto";
   int get level => 8;
   int get port => 443;
@@ -79,8 +79,9 @@ abstract class FlutterVlessURL {
     String? extra,
   }) {
     String sni = '';
-    streamSettingsBuilder.network = transport;
-    if (transport == 'tcp') {
+    final normalizedTransport = transport.toLowerCase();
+    streamSettingsBuilder.network = normalizedTransport;
+    if (normalizedTransport == 'tcp') {
       final tcpHeader = <String, dynamic>{"type": "none", "request": null};
       final tcpSettings = <String, dynamic>{
         "header": tcpHeader,
@@ -118,7 +119,15 @@ abstract class FlutterVlessURL {
         tcpHeader['type'] = 'none';
         sni = host != "" ? host ?? '' : '';
       }
-    } else if (transport == 'kcp') {
+    } else if (normalizedTransport == 'raw') {
+      final rawHeader = <String, dynamic>{"type": headerType ?? "none"};
+      streamSettingsBuilder.rawSettings = {
+        "header": rawHeader,
+        "acceptProxyProtocol": null,
+      };
+      sni = host != "" ? host ?? '' : '';
+    } else if (normalizedTransport == 'kcp' || normalizedTransport == 'mkcp') {
+      streamSettingsBuilder.network = 'kcp';
       streamSettingsBuilder.kcpSettings = {
         "mtu": 1350,
         "tti": 50,
@@ -132,7 +141,9 @@ abstract class FlutterVlessURL {
         },
         "seed": (seed == null || seed == '') ? null : seed,
       };
-    } else if (transport == 'ws') {
+    } else if (normalizedTransport == 'ws' ||
+        normalizedTransport == 'websocket') {
+      streamSettingsBuilder.network = 'ws';
       final wsHeaders = {"Host": host ?? ""};
       final wsSettings = {
         "path": path ?? ['/'],
@@ -143,7 +154,7 @@ abstract class FlutterVlessURL {
       };
       streamSettingsBuilder.wsSettings = wsSettings;
       sni = wsHeaders['Host'] as String;
-    } else if (transport == 'h2' || transport == 'http') {
+    } else if (normalizedTransport == 'h2' || normalizedTransport == 'http') {
       streamSettingsBuilder.network = 'h2';
       final h2Settings = {
         "host": host?.split(",") ?? "",
@@ -152,19 +163,19 @@ abstract class FlutterVlessURL {
       streamSettingsBuilder.h2Settings = h2Settings;
       final hosts = h2Settings['host'];
       sni = hosts is List && hosts.isNotEmpty ? hosts.first as String : sni;
-    } else if (transport == 'quic') {
+    } else if (normalizedTransport == 'quic') {
       streamSettingsBuilder.quicSettings = {
         "security": quicSecurity ?? 'none',
         "key": key ?? '',
         "header": {"type": headerType ?? "none"},
       };
-    } else if (transport == 'grpc') {
+    } else if (normalizedTransport == 'grpc') {
       streamSettingsBuilder.grpcSettings = {
         "serviceName": serviceName ?? "",
         "multiMode": mode == "multi",
       };
       sni = host ?? "";
-    } else if (transport == 'xhttp') {
+    } else if (normalizedTransport == 'xhttp') {
       // XHTTP links often rely on server-specific knobs in `extra`. Preserving
       // them is required for compatibility, but it is not proof the transport
       // will work on iOS; the provider HTTP health check is the real signal.
@@ -175,6 +186,17 @@ abstract class FlutterVlessURL {
         "mode": mode ?? "auto",
         "path": emptyToDefault(path, "/"),
         if (xhttpExtra != null) "extra": xhttpExtra,
+      };
+      sni = host ?? "";
+    } else if (normalizedTransport == 'httpupgrade' ||
+        normalizedTransport == 'http_upgrade') {
+      streamSettingsBuilder.network = 'httpupgrade';
+      final httpupgradeExtra = decodeXhttpExtra(extra);
+      streamSettingsBuilder.httpupgradeSettings = {
+        "path": emptyToDefault(path, "/"),
+        "host": host ?? "",
+        "headers": _stringMap(httpupgradeExtra?['headers']),
+        "acceptProxyProtocol": null,
       };
       sni = host ?? "";
     }
@@ -216,6 +238,20 @@ abstract class FlutterVlessURL {
     }
   }
 
+  Map<String, dynamic>? _stringMap(Object? value) {
+    if (value is! Map) {
+      return null;
+    }
+    final result = <String, dynamic>{};
+    value.forEach((key, item) {
+      final text = item?.toString();
+      if (text != null && text.isNotEmpty) {
+        result[key.toString()] = text;
+      }
+    });
+    return result.isEmpty ? null : result;
+  }
+
   void populateTlsSettings({
     required String? streamSecurity,
     required bool allowInsecure,
@@ -225,10 +261,11 @@ abstract class FlutterVlessURL {
     required String? publicKey,
     required String? shortId,
     required String? spiderX,
+    String? pinnedPeerCertSha256,
+    String? verifyPeerCertByName,
   }) {
     streamSettingsBuilder.security = streamSecurity ?? '';
     Map<String, dynamic> tlsSetting = {
-      "allowInsecure": allowInsecure,
       "serverName": sni,
       "alpn": alpns == '' ? null : alpns?.split(','),
       "minVersion": null,
@@ -243,6 +280,8 @@ abstract class FlutterVlessURL {
       "publicKey": publicKey,
       "shortId": shortId,
       "spiderX": spiderX,
+      "pinnedPeerCertSha256": _emptyToNull(pinnedPeerCertSha256),
+      "verifyPeerCertByName": _emptyToNull(verifyPeerCertByName),
     };
     if (streamSecurity == 'tls') {
       streamSettingsBuilder.realitySettings = null;
@@ -251,6 +290,13 @@ abstract class FlutterVlessURL {
       streamSettingsBuilder.tlsSettings = null;
       streamSettingsBuilder.realitySettings = tlsSetting;
     }
+  }
+
+  String? _emptyToNull(String? value) {
+    if (value == null || value.isEmpty) {
+      return null;
+    }
+    return value;
   }
 
   dynamic removeNulls(dynamic params) {
@@ -277,6 +323,7 @@ abstract class FlutterVlessURL {
       return XrayStreamSettings(
         network: value['network'] as String? ?? network,
         security: value['security'] as String? ?? '',
+        rawSettings: (value['rawSettings'] as Map?)?.cast<String, dynamic>(),
         tcpSettings: (value['tcpSettings'] as Map?)?.cast<String, dynamic>(),
         kcpSettings: (value['kcpSettings'] as Map?)?.cast<String, dynamic>(),
         wsSettings: (value['wsSettings'] as Map?)?.cast<String, dynamic>(),
@@ -289,6 +336,10 @@ abstract class FlutterVlessURL {
         grpcSettings: (value['grpcSettings'] as Map?)?.cast<String, dynamic>(),
         xhttpSettings:
             (value['xhttpSettings'] as Map?)?.cast<String, dynamic>(),
+        httpupgradeSettings:
+            (value['httpupgradeSettings'] as Map?)?.cast<String, dynamic>(),
+        hysteriaSettings:
+            (value['hysteriaSettings'] as Map?)?.cast<String, dynamic>(),
         dsSettings: (value['dsSettings'] as Map?)?.cast<String, dynamic>(),
         sockopt: (value['sockopt'] as Map?)?.cast<String, dynamic>(),
       );

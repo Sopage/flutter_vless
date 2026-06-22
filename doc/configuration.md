@@ -11,13 +11,19 @@ The public API intentionally keeps both layers accessible, because different use
 
 `FlutterVless.parse()` and `FlutterVless.parseMany()` accept:
 
-- single share links such as `vmess://`, `vless://`, `trojan://`, `ss://`, and `socks://`
+- single share links such as `vmess://`, `vless://`, `trojan://`, `ss://`,
+  `socks://`, `hysteria2://`, and `hy2://`
 - raw Xray JSON
 - base64-encoded subscription payloads
 - Clash YAML
 - sing-box JSON
 
-Unsupported sing-box-only protocols are skipped instead of being converted into broken Xray output.
+Clash YAML and sing-box JSON imports can also produce generated Xray configs
+for supported profile objects such as WireGuard and Hysteria2.
+
+Unsupported or not-yet-mapped protocols are skipped instead of being converted
+into broken Xray output. The next-version protocol inventory is tracked in
+`doc/protocol_support_roadmap.md`.
 
 ## `parse()` Versus `parseMany()`
 
@@ -94,7 +100,8 @@ The parser keeps server-provided details that are easy to lose in a simplified U
 
 ## What The Parser Does Not Promise
 
-- It does not convert every sing-box-only protocol into Xray.
+- It does not convert every subscription protocol into Xray until that mapping
+  has fixtures and platform validation.
 - It does not guarantee that every imported config will work on every platform.
 - It does not validate that a config is operational on the network you are currently using.
 

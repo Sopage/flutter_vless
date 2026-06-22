@@ -268,6 +268,7 @@ class XrayStreamSettings implements XrayJsonModel {
   const XrayStreamSettings({
     required this.network,
     required this.security,
+    this.rawSettings,
     this.tcpSettings,
     this.kcpSettings,
     this.wsSettings,
@@ -278,12 +279,15 @@ class XrayStreamSettings implements XrayJsonModel {
     this.realitySettings,
     this.grpcSettings,
     this.xhttpSettings,
+    this.httpupgradeSettings,
+    this.hysteriaSettings,
     this.dsSettings,
     this.sockopt,
   });
 
   final String network;
   final String security;
+  final JsonMap? rawSettings;
   final JsonMap? tcpSettings;
   final JsonMap? kcpSettings;
   final JsonMap? wsSettings;
@@ -294,6 +298,8 @@ class XrayStreamSettings implements XrayJsonModel {
   final JsonMap? realitySettings;
   final JsonMap? grpcSettings;
   final JsonMap? xhttpSettings;
+  final JsonMap? httpupgradeSettings;
+  final JsonMap? hysteriaSettings;
   final JsonMap? dsSettings;
   final JsonMap? sockopt;
 
@@ -306,6 +312,7 @@ class XrayStreamSettings implements XrayJsonModel {
     return {
       'network': network,
       'security': security,
+      'rawSettings': rawSettings,
       'tcpSettings': tcpSettings,
       'kcpSettings': kcpSettings,
       'wsSettings': wsSettings,
@@ -316,6 +323,8 @@ class XrayStreamSettings implements XrayJsonModel {
       'realitySettings': realitySettings,
       'grpcSettings': grpcSettings,
       'xhttpSettings': xhttpSettings,
+      'httpupgradeSettings': httpupgradeSettings,
+      'hysteriaSettings': hysteriaSettings,
       'dsSettings': dsSettings,
       'sockopt': sockopt,
     };
@@ -327,6 +336,7 @@ class XrayStreamSettingsBuilder {
 
   String network;
   String security = '';
+  JsonMap? rawSettings;
   JsonMap? tcpSettings;
   JsonMap? kcpSettings;
   JsonMap? wsSettings;
@@ -337,6 +347,8 @@ class XrayStreamSettingsBuilder {
   JsonMap? realitySettings;
   JsonMap? grpcSettings;
   JsonMap? xhttpSettings;
+  JsonMap? httpupgradeSettings;
+  JsonMap? hysteriaSettings;
   JsonMap? dsSettings;
   JsonMap? sockopt;
 
@@ -346,6 +358,7 @@ class XrayStreamSettingsBuilder {
     return XrayStreamSettings(
       network: network,
       security: security,
+      rawSettings: _immutableMap(rawSettings),
       tcpSettings: _immutableMap(tcpSettings),
       kcpSettings: _immutableMap(kcpSettings),
       wsSettings: _immutableMap(wsSettings),
@@ -356,6 +369,8 @@ class XrayStreamSettingsBuilder {
       realitySettings: _immutableMap(realitySettings),
       grpcSettings: _immutableMap(grpcSettings),
       xhttpSettings: _immutableMap(xhttpSettings),
+      httpupgradeSettings: _immutableMap(httpupgradeSettings),
+      hysteriaSettings: _immutableMap(hysteriaSettings),
       dsSettings: _immutableMap(dsSettings),
       sockopt: _immutableMap(sockopt),
     );
@@ -374,11 +389,18 @@ dynamic sanitizeXrayJson(dynamic params) {
     return sanitizeXrayJson(params.toJson());
   }
   if (params is Map) {
+    final source = Map<String, dynamic>.fromEntries(
+      params.entries
+          .map((entry) => MapEntry(entry.key.toString(), entry.value)),
+    );
+    _normalizeStreamSettingsAliases(source);
+    source.remove('allowInsecure');
+
     final map = <String, dynamic>{};
-    params.forEach((key, value) {
+    source.forEach((key, value) {
       final sanitized = sanitizeXrayJson(value);
       if (sanitized != null) {
-        map[key.toString()] = sanitized;
+        map[key] = sanitized;
       }
     });
     return map.isEmpty ? null : map;
@@ -394,4 +416,23 @@ dynamic sanitizeXrayJson(dynamic params) {
     return list.isEmpty ? null : list;
   }
   return params;
+}
+
+void _normalizeStreamSettingsAliases(JsonMap map) {
+  void moveAlias(String from, String to) {
+    if (!map.containsKey(from)) {
+      return;
+    }
+    final value = map.remove(from);
+    map.putIfAbsent(to, () => value);
+  }
+
+  moveAlias('xHTTPSettings', 'xhttpSettings');
+  moveAlias('httpUpgradeSettings', 'httpupgradeSettings');
+  moveAlias('splitHTTPSettings', 'splithttpSettings');
+
+  final network = map['network'];
+  if (network is String) {
+    map['network'] = network.toLowerCase();
+  }
 }

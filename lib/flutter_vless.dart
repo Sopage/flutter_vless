@@ -1,6 +1,9 @@
 // Copyright (c) 2024-2026 13FOX Studio / tfox.dev.
 // SPDX-License-Identifier: MIT
 
+import 'dart:convert';
+
+import 'package:flutter_vless/url/hysteria2.dart';
 import 'package:flutter_vless/url/shadowsocks.dart';
 import 'package:flutter_vless/url/socks.dart';
 import 'package:flutter_vless/url/subscription.dart';
@@ -9,6 +12,7 @@ import 'package:flutter_vless/url/url.dart';
 import 'package:flutter_vless/url/vless.dart';
 import 'package:flutter_vless/url/vmess.dart';
 import 'package:flutter_vless/url/xray_config.dart';
+import 'package:flutter_vless/url/xray_config_model.dart';
 import 'package:flutter_vless/url/xray_config_validator.dart';
 import 'package:flutter_vless_platform_interface/flutter_vless_platform_interface.dart';
 
@@ -113,11 +117,11 @@ class FlutterVless {
     bool proxyOnly = false,
     String notificationDisconnectButtonName = "DISCONNECT",
   }) async {
-    _configValidator.validateJsonString(config);
+    final normalizedConfig = _normalizeConfigString(config);
 
     await VlessPlatform.instance.startVless(
       remark: remark,
-      config: config,
+      config: normalizedConfig,
       blockedApps: blockedApps,
       proxyOnly: proxyOnly,
       bypassSubnets: bypassSubnets,
@@ -144,9 +148,9 @@ class FlutterVless {
   Future<int> getServerDelay(
       {required String config,
       String url = 'https://google.com/generate_204'}) async {
-    _configValidator.validateJsonString(config);
+    final normalizedConfig = _normalizeConfigString(config);
     return await VlessPlatform.instance
-        .getServerDelay(config: config, url: url);
+        .getServerDelay(config: normalizedConfig, url: url);
   }
 
   /// Measures delay through the currently connected runtime.
@@ -169,12 +173,13 @@ class FlutterVless {
 
   /// Parse a share link, raw Xray JSON config, or subscription payload.
   ///
-  /// Supports vmess://, vless://, trojan://, ss://, socks://, raw Xray JSON,
-  /// base64 share-link subscriptions, Clash YAML, and sing-box JSON. Prefer
-  /// this over [parseFromURL] for clipboard/subscription imports: raw JSON can
-  /// carry VLESS Encryption keys that are not recoverable from a bare
-  /// `vless://` link. If a subscription contains multiple supported profiles,
-  /// this returns the first one; use [parseMany] to keep the full list.
+  /// Supports vmess://, vless://, trojan://, ss://, socks://, hysteria2://,
+  /// hy2://, raw Xray JSON, base64 share-link subscriptions, Clash YAML, and
+  /// sing-box JSON. Prefer this over [parseFromURL] for clipboard/subscription
+  /// imports: raw JSON can carry VLESS Encryption keys that are not recoverable
+  /// from a bare `vless://` link. If a subscription contains multiple supported
+  /// profiles, this returns the first one; use [parseMany] to keep the full
+  /// list.
   static FlutterVlessURL parse(String input) {
     final trimmed = input.trim();
     if (_isSingleShareLink(trimmed)) {
@@ -186,9 +191,10 @@ class FlutterVless {
   /// Parse every supported profile from a subscription payload.
   ///
   /// Unsupported protocols are skipped intentionally. This plugin embeds Xray,
-  /// so sing-box-only protocols such as Hysteria2, TUIC, ShadowTLS, AnyTLS, and
-  /// WireGuard should remain explicit product-scope gaps instead of silently
-  /// producing broken Xray JSON.
+  /// so protocols that do not yet have a verified Xray import mapping should
+  /// remain explicit product-scope gaps instead of silently producing broken
+  /// Xray JSON. WireGuard and Hysteria2 are Xray protocols, but their runtime
+  /// behavior still needs platform artifact validation before release.
   static List<FlutterVlessURL> parseMany(String input) {
     return VlessSubscriptionParser.parseMany(
       input: input,
@@ -199,7 +205,8 @@ class FlutterVless {
 
   /// Parses a single share link into a typed [FlutterVlessURL] object.
   ///
-  /// Supports `vmess://`, `vless://`, `trojan://`, `ss://`, and `socks://`.
+  /// Supports `vmess://`, `vless://`, `trojan://`, `ss://`, `socks://`,
+  /// `hysteria2://`, and `hy2://`.
   /// For raw Xray JSON, Clash YAML, sing-box JSON, or subscription payloads,
   /// use [parse] or [parseMany].
   static FlutterVlessURL parseFromURL(String url) {
@@ -214,6 +221,9 @@ class FlutterVless {
         return ShadowSocksURL(url: url);
       case 'socks':
         return SocksURL(url: url);
+      case 'hysteria2':
+      case 'hy2':
+        return Hysteria2URL(url: url);
       default:
         throw ArgumentError('url is invalid');
     }
@@ -227,7 +237,12 @@ class FlutterVless {
     if (separator <= 0) {
       return false;
     }
-    return const {'vmess', 'vless', 'trojan', 'ss', 'socks'}
+    return const {'vmess', 'vless', 'trojan', 'ss', 'socks', 'hysteria2', 'hy2'}
         .contains(input.substring(0, separator).toLowerCase());
+  }
+
+  static String _normalizeConfigString(String config) {
+    final decoded = _configValidator.validateJsonString(config);
+    return jsonEncode(sanitizeXrayJson(decoded));
   }
 }

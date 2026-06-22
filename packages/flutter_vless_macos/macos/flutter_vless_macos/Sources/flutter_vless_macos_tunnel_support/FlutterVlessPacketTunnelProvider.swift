@@ -8,6 +8,8 @@
 import NetworkExtension
 import CXRay
 import Tun2SocksKit
+import Tun2SocksKitC
+import HevSocks5Tunnel
 import Foundation
 import CFNetwork
 import os
@@ -35,11 +37,10 @@ import Darwin
 //    while DNS is unusable, Xray's outbound server route loops into utun, or
 //    HEV only sees upload-side packets. Keep the layered health checks in this
 //    file and treat them as part of the runtime contract.
-// 2. DNS resolver publication and DNS route exclusions must stay together.
-//    `NEDNSSettings` gives macOS a real default resolver while the tunnel is
-//    active; the host route exclusions make packets to those DNS servers leave
-//    through the primary interface instead of recursively depending on the
-//    Packet Tunnel.
+// 2. Publish explicit Packet Tunnel DNS settings. macOS can otherwise create an
+//    unreachable default resolver while ordinary app sockets already prefer the
+//    utun route. Use public IPv4 DNS with `matchDomains = [""]` and keep DNS host
+//    exclusions disabled so the resolver follows the validated packet path.
 // 3. The remote proxy server needs a host route outside utun. Without it, Xray
 //    tries to reach the server through the same tunnel that depends on Xray
 //    reaching the server.
@@ -71,6 +72,30 @@ private let tunnelLog = Logger(
 /// keeps the packet path IPv4-only.
 private let tunnelMTU = 1280
 
+/// IPv4 addresses for the virtual utun interface.
+///
+/// macOS behaved poorly with a broad `198.18.0.1/16` interface assignment: app
+/// TCP connections selected the utun route, then failed immediately with
+/// `ENETDOWN` before HEV saw a TCP session. A /32 local address was also not
+/// reliable in the example app: route snapshots showed `default -> link#utun`
+/// while app sockets failed with `ENETUNREACH`, and ifconfig still showed a
+/// self-peer (`198.18.0.2 --> 198.18.0.2`). Current Apple sing-box builds keep
+/// `tunnelRemoteAddress` independent from the IPv4 address, and HEV/Xray
+/// examples commonly use the local tunnel address as the default-route gateway.
+private let tunnelRemoteAddress = "127.0.0.1"
+private let tunnelLocalAddress = "198.18.0.1"
+private let tunnelDefaultGatewayAddress = "198.18.0.1"
+private let tunnelLocalSubnetMask = "255.255.255.0"
+private let tunnelLocalPrefixLength = 24
+private let tunnelDefaultDNSServers = ["1.1.1.1", "8.8.8.8"]
+
+/// Upper bound for macOS to accept Packet Tunnel network settings.
+///
+/// The provider must not remain in `NEVPNStatus.connecting` indefinitely. A
+/// timeout here makes startup fail cleanly so the app can tear the profile down
+/// instead of leaving the system route/DNS state half-transitioned.
+private let networkSettingsTimeoutSeconds: TimeInterval = 15
+
 /// HEV TCP buffer size used by the validated macOS path.
 ///
 /// This is intentionally modest for an extension process. Increasing it can
@@ -78,13 +103,6 @@ private let tunnelMTU = 1280
 /// with memory pressure and long-running browser traffic because extensions run
 /// with tighter lifecycle constraints than the app.
 private let hevTCPBufferSize = 4096
-
-/// System DNS servers published by NetworkExtension and then route-excluded.
-///
-/// Publishing them through `NEDNSSettings` prevents macOS from creating an empty
-/// unreachable resolver while the VPN is active. Excluding host routes for these
-/// same IPs keeps the resolver packets reachable through the primary interface.
-private let dnsServers = ["1.1.1.1", "8.8.8.8"]
 
 /// Small debug ring buffer shared by all provider callbacks.
 ///
@@ -102,7 +120,7 @@ private final class TunnelDebugStore {
     static let shared = TunnelDebugStore()
     private let lock = NSLock()
     private var lines: [String] = []
-    private let maxLines = 300
+    private let maxLines = 1200
     private var fileURL: URL?
 
     /// Opens the optional App Group debug file.
@@ -143,7 +161,7 @@ private final class TunnelDebugStore {
         if let fileURL {
             if let handle = try? FileHandle(forWritingTo: fileURL) {
                 defer { try? handle.close() }
-                try? handle.seekToEnd()
+                _ = try? handle.seekToEnd()
                 if let data = "\(line)\n".data(using: .utf8) {
                     try? handle.write(contentsOf: data)
                 }
@@ -155,6 +173,22 @@ private final class TunnelDebugStore {
         lock.lock()
         defer { lock.unlock() }
         return lines.joined(separator: "\n")
+    }
+}
+
+private final class SingleResumeBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var didResume = false
+
+    func resume(_ body: () -> Void) {
+        lock.lock()
+        guard !didResume else {
+            lock.unlock()
+            return
+        }
+        didResume = true
+        lock.unlock()
+        body()
     }
 }
 
@@ -206,6 +240,7 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
             } catch {
                 rememberTunnelLog("startTunnel failed: \(error.localizedDescription)")
                 tunnelLog.error("startTunnel failed: \(error.localizedDescription, privacy: .public)")
+                cleanupAfterStartupFailure()
                 completionHandler(error)
             }
         }
@@ -216,16 +251,13 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
     /// Ordering matters:
     ///
     /// 1. Normalize Xray JSON before parsing ports/routes.
-    /// 2. Apply `NEPacketTunnelNetworkSettings` before Xray starts, so the route
-    ///    health check observes the real post-tunnel routing table.
-    /// 3. Check the remote server route before Xray startup, so a route loop is
-    ///    visible as a provider diagnostic instead of a vague Xray transport
-    ///    timeout.
-    /// 4. Start Xray before HEV because HEV immediately connects to the local
+    /// 2. Apply `NEPacketTunnelNetworkSettings` before starting Xray/HEV so
+    ///    packet flow and routes are owned by NetworkExtension first.
+    /// 3. Start Xray before HEV because HEV immediately connects to the local
     ///    SOCKS inbound.
-    ///
-    /// A later-looking simplification, for example starting Xray first or
-    /// removing the server TCP check, makes failures much harder to classify.
+    /// 4. Run server-route and SOCKS health checks asynchronously after startup.
+    ///    They are diagnostics only and must not block `startTunnel`, otherwise
+    ///    macOS can leave the VPN profile stuck in `connecting`.
     private func startTunnelAsync(options: [String : NSObject]?) async throws {
         rememberTunnelLog("Starting Xray packet tunnel")
         tunnelLog.info("Starting Xray packet tunnel options=\(String(describing: options), privacy: .public)")
@@ -255,26 +287,36 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         guard let parsedConfig = parseConfig(jsonData: preparedXrayConfig) else {
             throw tunnelError("Unable to find a SOCKS/HTTP inbound port in Xray config")
         }
+        let appDNSServers = providerConfiguration["dnsServers"] as? [String] ?? []
+        rememberTunnelLog("App provided DNS snapshot before VPN: \(appDNSServers.isEmpty ? "none" : appDNSServers.joined(separator: ","))")
+        tunnelLog.info("App provided DNS snapshot before VPN: \(appDNSServers.isEmpty ? "none" : appDNSServers.joined(separator: ","), privacy: .public)")
         rememberTunnelLog("Using local Xray inbound port \(parsedConfig.inboundPort), server=\(parsedConfig.serverAddress ?? "nil")")
         tunnelLog.info("Using local Xray inbound port \(parsedConfig.inboundPort, privacy: .public)")
 
-        // `tunnelRemoteAddress` is only a NetworkExtension identity value for
-        // this utun, not the actual VLESS server. The real server is carried in
-        // the Xray outbound and route-excluded below.
-        let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "254.1.1.1")
+        // `tunnelRemoteAddress` is only the NetworkExtension remote endpoint
+        // label. It is not the TUN IPv4 gateway and not the actual VLESS server.
+        // The real server is carried in the Xray outbound and route-excluded
+        // below.
+        let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: tunnelRemoteAddress)
         settings.mtu = NSNumber(value: tunnelMTU)
         rememberTunnelLog("Configured packet tunnel MTU=\(tunnelMTU)")
         settings.ipv4Settings = {
-            let settings = NEIPv4Settings(addresses: ["198.18.0.1"], subnetMasks: ["255.255.0.0"])
+            let settings = NEIPv4Settings(
+                addresses: [tunnelLocalAddress],
+                subnetMasks: [tunnelLocalSubnetMask]
+            )
             // Default route through utun is what makes this VPN mode, not just a
-            // local proxy. DNS and server host routes are then excluded to avoid
+            // local proxy. The remote server host route is excluded to avoid
             // startup recursion.
-            settings.includedRoutes = [NEIPv4Route.default()]
+            let defaultRoute = NEIPv4Route(destinationAddress: "0.0.0.0", subnetMask: "0.0.0.0")
+            defaultRoute.gatewayAddress = tunnelDefaultGatewayAddress
+            settings.includedRoutes = [defaultRoute]
             settings.excludedRoutes = buildIPv4ExcludedRoutes(
                 serverAddress: parsedConfig.serverAddress,
                 bypassSubnets: bypassSubnets
             )
-            tunnelLog.info("IPv4 settings address=198.18.0.1/16 includedRoutes=default excludedRoutes=\(settings.excludedRoutes?.count ?? 0, privacy: .public)")
+            rememberTunnelLog("IPv4 settings local=\(tunnelLocalAddress)/\(tunnelLocalPrefixLength) gateway=\(tunnelDefaultGatewayAddress) remoteLabel=\(tunnelRemoteAddress) subnetMask=\(tunnelLocalSubnetMask) includedRoutes=default excludedRoutes=\(settings.excludedRoutes?.count ?? 0)")
+            tunnelLog.info("IPv4 settings local=\(tunnelLocalAddress, privacy: .public)/\(tunnelLocalPrefixLength, privacy: .public) gateway=\(tunnelDefaultGatewayAddress, privacy: .public) remoteLabel=\(tunnelRemoteAddress, privacy: .public) subnetMask=\(tunnelLocalSubnetMask, privacy: .public) includedRoutes=default excludedRoutes=\(settings.excludedRoutes?.count ?? 0, privacy: .public)")
             return settings
         }()
         // Keep the packet path IPv4-only for now. With IPv6 enabled, macOS can
@@ -284,35 +326,78 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         settings.ipv6Settings = nil
         rememberTunnelLog("IPv6 tunnel routing disabled; using IPv4-only packet tunnel")
         tunnelLog.info("IPv6 tunnel routing disabled; using IPv4-only packet tunnel")
-        settings.dnsSettings = {
-            // macOS needs an explicit default resolver while a packet tunnel is
-            // active; otherwise `scutil --dns` can end up with a nameless,
-            // unreachable resolver and browsers stall before opening TCP
-            // sessions. The DNS server host routes are excluded below, so these
-            // resolver packets leave via the primary interface while normal app
-            // traffic still follows the default utun route.
-            let settings = NEDNSSettings(servers: dnsServers)
-            // Empty string means "match all domains". Without it, macOS can keep
-            // using the pre-tunnel resolver ordering and the browser symptoms
-            // become network-dependent.
-            settings.matchDomains = [""]
-            return settings
-        }()
-        rememberTunnelLog("System DNS published with route exclusions: \(dnsServers.joined(separator: ","))")
-        tunnelLog.info("Applying tunnel network settings")
-        try await self.setTunnelNetworkSettings(settings)
-        tunnelLog.info("Tunnel network settings applied")
-        if let serverAddress = parsedConfig.serverAddress {
-            let serverRouteResult = serverTCPRouteHealthCheck(
-                host: serverAddress,
-                port: parsedConfig.serverPort ?? 443
-            )
-            rememberTunnelLog("Server TCP route health check: \(serverRouteResult)")
-            tunnelLog.info("Server TCP route health check: \(serverRouteResult, privacy: .public)")
-        }
+        let dnsSettings = NEDNSSettings(servers: tunnelDefaultDNSServers)
+        dnsSettings.matchDomains = [""]
+        settings.dnsSettings = dnsSettings
+        rememberTunnelLog("Packet tunnel DNS servers=\(tunnelDefaultDNSServers.joined(separator: ",")) matchDomains=default appSnapshot=\(appDNSServers.isEmpty ? "none" : appDNSServers.joined(separator: ","))")
+        tunnelLog.info("Packet tunnel DNS servers=\(tunnelDefaultDNSServers.joined(separator: ","), privacy: .public) matchDomains=default")
+        try await applyTunnelNetworkSettings(settings)
         try self.startXRay(xrayConfig: preparedXrayConfig)
+        let tunnelFileDescriptor = packetFlowFileDescriptor()
+        self.startSocks5Tunnel(
+            serverPort: parsedConfig.inboundPort,
+            tunnelFileDescriptor: tunnelFileDescriptor
+        )
+        logServerTCPRouteHealthCheck(
+            host: parsedConfig.serverAddress,
+            port: parsedConfig.serverPort ?? 443
+        )
         logSocksInboundHealthCheck(port: parsedConfig.inboundPort)
-        self.startSocks5Tunnel(serverPort: parsedConfig.inboundPort)
+    }
+
+    private func applyTunnelNetworkSettings(_ settings: NEPacketTunnelNetworkSettings) async throws {
+        rememberTunnelLog("Applying tunnel network settings")
+        tunnelLog.info("Applying tunnel network settings")
+        try await setTunnelNetworkSettings(settings, timeoutSeconds: networkSettingsTimeoutSeconds)
+        rememberTunnelLog("Tunnel network settings applied")
+        tunnelLog.info("Tunnel network settings applied")
+    }
+
+    private func setTunnelNetworkSettings(
+        _ settings: NEPacketTunnelNetworkSettings?,
+        timeoutSeconds: TimeInterval
+    ) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let resumeBox = SingleResumeBox()
+            let timeoutTask = Task {
+                let nanoseconds = UInt64(timeoutSeconds * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: nanoseconds)
+                guard !Task.isCancelled else {
+                    return
+                }
+                resumeBox.resume {
+                    let message = "Timed out applying packet tunnel network settings after \(Int(timeoutSeconds))s"
+                    rememberTunnelLog(message)
+                    continuation.resume(throwing: tunnelError(message))
+                }
+            }
+
+            self.setTunnelNetworkSettings(settings) { error in
+                timeoutTask.cancel()
+                resumeBox.resume {
+                    if let error {
+                        rememberTunnelLog("Applying tunnel network settings failed: \(error.localizedDescription)")
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume()
+                    }
+                }
+            }
+        }
+    }
+
+    private func cleanupAfterStartupFailure() {
+        stopXRay()
+        Socks5Tunnel.quit()
+        setTunnelNetworkSettings(nil) { error in
+            if let error {
+                rememberTunnelLog("Clearing tunnel network settings after startup failure failed: \(error.localizedDescription)")
+                tunnelLog.error("Clearing tunnel network settings after startup failure failed: \(error.localizedDescription, privacy: .public)")
+            } else {
+                rememberTunnelLog("Cleared tunnel network settings after startup failure")
+                tunnelLog.info("Cleared tunnel network settings after startup failure")
+            }
+        }
     }
 
     /// Stops Xray and HEV.
@@ -330,8 +415,32 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         }
         stopXRay()
         Socks5Tunnel.quit()
+        clearTunnelNetworkSettingsBeforeStop(completionHandler: completionHandler)
+    }
 
-        completionHandler()
+    private func clearTunnelNetworkSettingsBeforeStop(completionHandler: @escaping () -> Void) {
+        let resumeBox = SingleResumeBox()
+        let timeoutTask = DispatchWorkItem {
+            resumeBox.resume {
+                rememberTunnelLog("Timed out clearing tunnel network settings during stop; completing stop anyway")
+                tunnelLog.warning("Timed out clearing tunnel network settings during stop")
+                completionHandler()
+            }
+        }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3, execute: timeoutTask)
+        setTunnelNetworkSettings(nil) { error in
+            timeoutTask.cancel()
+            resumeBox.resume {
+                if let error {
+                    rememberTunnelLog("Clearing tunnel network settings during stop failed: \(error.localizedDescription)")
+                    tunnelLog.error("Clearing tunnel network settings during stop failed: \(error.localizedDescription, privacy: .public)")
+                } else {
+                    rememberTunnelLog("Cleared tunnel network settings during stop")
+                    tunnelLog.info("Cleared tunnel network settings during stop")
+                }
+                completionHandler()
+            }
+        }
     }
 
     /// Provider-message bridge used by the Flutter app.
@@ -400,7 +509,7 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
     /// bridge that decides whether utun packets actually become SOCKS sessions.
     /// For this reason the HEV log is deliberately kept at `debug` level and
     /// exposed in provider snapshots during the macOS stabilization period.
-    private func startSocks5Tunnel(serverPort port: Int) {
+    private func startSocks5Tunnel(serverPort port: Int, tunnelFileDescriptor: Int32?) {
         // HEV is the tun2socks bridge: it reads IP packets from NetworkExtension
         // and forwards them into the local SOCKS inbound opened by Xray.
         // Xray alone can start successfully while user traffic still cannot
@@ -424,15 +533,142 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
           log-level: debug
           limit-nofile: 65535
         """
-        rememberTunnelLog("Starting HEV socks5 tunnel on 127.0.0.1:\(port), mtu=\(tunnelMTU), tcpBuffer=\(hevTCPBufferSize), log=\(logURL.path)")
-        tunnelLog.info("Starting HEV socks5 tunnel on 127.0.0.1:\(port, privacy: .public), mtu \(tunnelMTU, privacy: .public), tcpBuffer \(hevTCPBufferSize, privacy: .public)")
+        rememberTunnelLog("HEV config summary: tunnel.mtu=\(tunnelMTU), socks5=127.0.0.1:\(port), udp=udp, tcpBuffer=\(hevTCPBufferSize), timeoutMs=5000/60000")
+        if let tunnelFileDescriptor {
+            rememberTunnelLog("Starting HEV socks5 tunnel on 127.0.0.1:\(port), fd=\(tunnelFileDescriptor), mtu=\(tunnelMTU), tcpBuffer=\(hevTCPBufferSize), log=\(logURL.path)")
+            tunnelLog.info("Starting HEV socks5 tunnel on 127.0.0.1:\(port, privacy: .public), fd \(tunnelFileDescriptor, privacy: .public), mtu \(tunnelMTU, privacy: .public), tcpBuffer \(hevTCPBufferSize, privacy: .public)")
+        } else {
+            rememberTunnelLog("Starting HEV socks5 tunnel on 127.0.0.1:\(port) using Tun2SocksKit fd autodetect fallback, mtu=\(tunnelMTU), tcpBuffer=\(hevTCPBufferSize), log=\(logURL.path)")
+            tunnelLog.warning("Starting HEV socks5 tunnel using fd autodetect fallback on 127.0.0.1:\(port, privacy: .public)")
+        }
         DispatchQueue.global(qos: .userInitiated).async {
             tunnelLog.info("HEV socks5 tunnel thread entered")
-            let exitCode = Socks5Tunnel.run(withConfig: .string(content: config))
+            let exitCode: Int32
+            if let tunnelFileDescriptor {
+                rememberTunnelLog("HEV explicit-fd run begin fd=\(tunnelFileDescriptor)")
+                exitCode = config.withCString { rawPointer in
+                    rawPointer.withMemoryRebound(to: UInt8.self, capacity: config.utf8.count) {
+                        hev_socks5_tunnel_main_from_str($0, UInt32(config.utf8.count), tunnelFileDescriptor)
+                    }
+                }
+            } else {
+                exitCode = Socks5Tunnel.run(withConfig: .string(content: config))
+            }
             rememberTunnelLog("HEV socks5 tunnel exited with code \(exitCode)")
             tunnelLog.error("HEV socks5 tunnel exited with code \(exitCode, privacy: .public)")
             NSLog("HEV_SOCKS5_TUNNEL_MAIN: \(exitCode)")
         }
+    }
+
+    private func packetFlowFileDescriptor() -> Int32? {
+        var attempts: [String] = []
+        for attempt in 1...12 {
+            let rawValue = packetFlow.value(forKeyPath: "socket.fileDescriptor")
+            let rawType = rawValue.map { String(describing: type(of: $0)) } ?? "nil"
+            let rawDescription = String(describing: rawValue)
+            if let fileDescriptor = int32FileDescriptor(from: rawValue) {
+                let validation = describeUtunFileDescriptor(fileDescriptor)
+                attempts.append("#\(attempt) rawType=\(rawType) raw=\(rawDescription) fd=\(fileDescriptor) \(validation)")
+                rememberTunnelLog("packetFlow fd KVC attempts: \(attempts.joined(separator: " | "))")
+                rememberTunnelLog("Detected utun fd candidates before HEV start: \(describeUtunFileDescriptorCandidates(utunFileDescriptorCandidates()))")
+                rememberTunnelLog("Using explicit packetFlow file descriptor \(fileDescriptor) for HEV")
+                tunnelLog.info("Using explicit packetFlow file descriptor \(fileDescriptor, privacy: .public) for HEV")
+                return fileDescriptor
+            }
+            attempts.append("#\(attempt) rawType=\(rawType) raw=\(rawDescription) converted=nil")
+            usleep(50_000)
+        }
+        let candidates = utunFileDescriptorCandidates()
+        rememberTunnelLog("Could not read packetFlow socket file descriptor; attempts: \(attempts.joined(separator: " | "))")
+        rememberTunnelLog("Detected utun fd candidates after KVC failure: \(describeUtunFileDescriptorCandidates(candidates))")
+        if candidates.count == 1, let candidate = candidates.first {
+            rememberTunnelLog("Using the only detected utun file descriptor for HEV after KVC failure: \(candidate.logDescription)")
+            tunnelLog.info("Using only detected utun file descriptor \(candidate.fd, privacy: .public) for HEV after KVC failure")
+            return candidate.fd
+        }
+        tunnelLog.warning("Could not read packetFlow socket file descriptor; HEV will use fd autodetect fallback")
+        return nil
+    }
+
+    private func int32FileDescriptor(from value: Any?) -> Int32? {
+        if let value = value as? Int32 {
+            return value >= 0 ? value : nil
+        }
+        if let value = value as? Int {
+            return value >= 0 && value <= Int(Int32.max) ? Int32(value) : nil
+        }
+        if let value = value as? NSNumber {
+            let intValue = value.intValue
+            return intValue >= 0 && intValue <= Int(Int32.max) ? Int32(intValue) : nil
+        }
+        return nil
+    }
+
+    private func describeUtunFileDescriptor(_ fd: Int32) -> String {
+        guard let unit = utunUnit(for: fd) else {
+            return "utunValidation=not-utun"
+        }
+        return "utunValidation=ok unit=\(unit)"
+    }
+
+    private struct UtunFileDescriptorCandidate {
+        let fd: Int32
+        let unit: UInt32
+
+        var interfaceName: String {
+            guard unit > 0 else {
+                return "utun?"
+            }
+            return "utun\(unit - 1)"
+        }
+
+        var logDescription: String {
+            "fd=\(fd)/unit=\(unit)/if=\(interfaceName)"
+        }
+    }
+
+    private func utunFileDescriptorCandidates() -> [UtunFileDescriptorCandidate] {
+        var candidates: [UtunFileDescriptorCandidate] = []
+        for fd in Int32(0)...Int32(1024) {
+            if let unit = utunUnit(for: fd) {
+                candidates.append(UtunFileDescriptorCandidate(fd: fd, unit: unit))
+            }
+        }
+        return candidates
+    }
+
+    private func describeUtunFileDescriptorCandidates(_ candidates: [UtunFileDescriptorCandidate]) -> String {
+        if candidates.isEmpty {
+            return "none"
+        }
+        return candidates.map(\.logDescription).joined(separator: ", ")
+    }
+
+    private func utunUnit(for fd: Int32) -> UInt32? {
+        var ctlInfo = ctl_info()
+        withUnsafeMutablePointer(to: &ctlInfo.ctl_name) {
+            $0.withMemoryRebound(to: CChar.self, capacity: MemoryLayout.size(ofValue: $0.pointee)) {
+                _ = strcpy($0, "com.apple.net.utun_control")
+            }
+        }
+
+        var address = sockaddr_ctl()
+        var length = socklen_t(MemoryLayout.size(ofValue: address))
+        let peerResult = withUnsafeMutablePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getpeername(fd, $0, &length)
+            }
+        }
+        guard peerResult == 0, address.sc_family == AF_SYSTEM else {
+            return nil
+        }
+        guard ioctl(fd, CTLIOCGINFO, &ctlInfo) == 0 else {
+            return nil
+        }
+        guard address.sc_id == ctlInfo.ctl_id else {
+            return nil
+        }
+        return address.sc_unit
     }
 
     /// Starts Xray inside the extension process.
@@ -500,9 +736,9 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
     /// Normalizes imported Xray JSON for macOS packet-tunnel constraints.
     ///
     /// The same URL parser is used for standalone Xray configs and for this
-    /// extension, but packet tunnels have tighter rules: file logs may be denied inside the
-    /// extension sandbox, DNS must line up with `NEDNSSettings`, and the remote
-    /// proxy server must not be reached through the tunnel that depends on it.
+    /// extension, but packet tunnels have tighter rules: file logs may be denied
+    /// inside the extension sandbox, and the remote proxy server must not be
+    /// reached through the tunnel that depends on it.
     private func prepareXrayConfigForTunnel(_ jsonData: Data) -> Data? {
         guard let prepared = TunnelXrayConfigPreparer.prepare(
             jsonData: jsonData,
@@ -525,25 +761,18 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
     /// outside:
     ///
     /// - user-provided bypass subnets,
-    /// - DNS servers published through `NEDNSSettings`,
     /// - the resolved remote proxy server IP.
     ///
-    /// Removing DNS exclusions can produce a connected VPN with an unusable
-    /// resolver. Removing the server exclusion can create an Xray self-routing
-    /// loop where the server connection tries to traverse the tunnel it is meant
-    /// to establish.
-    private func buildIPv4ExcludedRoutes(serverAddress: String?, bypassSubnets: [String]) -> [NEIPv4Route] {
+    /// Removing the server exclusion can create an Xray self-routing loop where
+    /// the server connection tries to traverse the tunnel it is meant to
+    /// establish.
+    private func buildIPv4ExcludedRoutes(
+        serverAddress: String?,
+        bypassSubnets: [String]
+    ) -> [NEIPv4Route] {
         var routes = bypassSubnets.compactMap { ipv4Route(fromCIDR: $0) }
-        // Keep DNS reachable outside the packet tunnel for the current macOS
-        // path. HEV is receiving almost exclusively UDP packets when DNS is
-        // routed through VLESS/XHTTP, so browsers never progress to TCP page
-        // loads. Application traffic still uses the default VPN route.
-        let dnsRoutes = dnsServers.map {
-            NEIPv4Route(destinationAddress: $0, subnetMask: "255.255.255.255")
-        }
-        routes.append(contentsOf: dnsRoutes)
-        rememberTunnelLog("Excluded DNS route(s): \(dnsServers.joined(separator: ","))")
-        tunnelLog.info("Excluded \(dnsRoutes.count, privacy: .public) DNS route(s) from VPN: \(dnsServers.joined(separator: ","), privacy: .public)")
+        rememberTunnelLog("DNS route exclusions disabled; using Packet Tunnel DNS settings")
+        tunnelLog.info("DNS route exclusions disabled; using Packet Tunnel DNS settings")
         if let serverAddress {
             let serverAddresses = resolveIPv4Addresses(for: serverAddress)
             let serverRoutes = serverAddresses.map {
@@ -573,6 +802,7 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
     ///   complete HTTPS through the same local SOCKS path.
     private func logSocksInboundHealthCheck(port: Int) {
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) {
+            rememberTunnelLog("SOCKS health checks begin port=\(port)")
             // The three checks separate local startup from real Internet reach:
             // 1. SOCKS inbound: Xray opened the local port.
             // 2. CONNECT: Xray accepted an outbound request.
@@ -591,6 +821,7 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
             rememberTunnelLog("XRay internal delay health check: \(xrayDelayResult)")
             tunnelLog.info("XRay internal delay health check: \(xrayDelayResult, privacy: .public)")
             Task {
+                rememberTunnelLog("SOCKS URLSession HTTPS health check begin port=\(port) url=https://google.com/generate_204")
                 let urlSessionResult = await self.socksURLSessionHealthCheck(
                     port: port,
                     url: "https://google.com/generate_204"
@@ -598,6 +829,18 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
                 rememberTunnelLog("SOCKS URLSession HTTPS health check: \(urlSessionResult)")
                 tunnelLog.info("SOCKS URLSession HTTPS health check: \(urlSessionResult, privacy: .public)")
             }
+        }
+    }
+
+    private func logServerTCPRouteHealthCheck(host: String?, port: Int) {
+        guard let host else {
+            return
+        }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) {
+            rememberTunnelLog("Server TCP route health check begin host=\(host) port=\(port)")
+            let serverRouteResult = self.serverTCPRouteHealthCheck(host: host, port: port)
+            rememberTunnelLog("Server TCP route health check: \(serverRouteResult)")
+            tunnelLog.info("Server TCP route health check: \(serverRouteResult, privacy: .public)")
         }
     }
 
@@ -718,6 +961,7 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
     /// path that bypasses the IPv4 exclusion strategy.
     private func serverTCPRouteHealthCheck(host: String, port: Int) -> String {
         let addresses = isIPv4Literal(host) ? [host] : resolveIPv4Addresses(for: host)
+        rememberTunnelLog("Server TCP route health check resolved host=\(host) addresses=\(addresses.isEmpty ? "none" : addresses.joined(separator: ","))")
         guard let addressString = addresses.first else {
             return "resolve \(host) failed"
         }
@@ -1005,7 +1249,7 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
               !content.isEmpty else {
             return nil
         }
-        return content.split(separator: "\n").suffix(40).joined(separator: "\n")
+        return content.split(separator: "\n").suffix(160).joined(separator: "\n")
     }
 
     /// Kept for the future dual-stack path. It is intentionally unused while
@@ -1090,6 +1334,7 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         var result: UnsafeMutablePointer<addrinfo>?
         let status = getaddrinfo(host, nil, &hints, &result)
         guard status == 0, let first = result else {
+            rememberTunnelLog("Failed to resolve \(host): \(String(cString: gai_strerror(status)))")
             tunnelLog.warning("Failed to resolve \(host, privacy: .public): \(String(cString: gai_strerror(status)), privacy: .public)")
             return []
         }
@@ -1134,7 +1379,7 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     private func logTrafficStats(context: String) {
-        guard Date().timeIntervalSince(lastTrafficLogDate) >= 5 || context != "poll" else {
+        guard Date().timeIntervalSince(lastTrafficLogDate) >= 2 || context != "poll" else {
             return
         }
         lastTrafficLogDate = Date()

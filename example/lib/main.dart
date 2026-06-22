@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_vless/flutter_vless.dart';
@@ -58,6 +61,34 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    final testConfigB64 =
+        const String.fromEnvironment('FLUTTER_VLESS_TEST_CONFIG_B64');
+    if (testConfigB64.isNotEmpty) {
+      try {
+        config.text = utf8.decode(base64Decode(testConfigB64));
+      } on FormatException {
+        config.text = testConfigB64;
+      }
+      remark = const String.fromEnvironment(
+        'FLUTTER_VLESS_TEST_REMARK',
+        defaultValue: 'Android test profile',
+      );
+    }
+    final testConfigPath = const String.fromEnvironment(
+      'FLUTTER_VLESS_TEST_CONFIG_PATH',
+      defaultValue:
+          '/data/data/com.example.flutter_vless_example/files/flutter_vless_test_config.json',
+    );
+    try {
+      final testConfigFile = File(testConfigPath);
+      if (testConfigFile.existsSync()) {
+        config.text = testConfigFile.readAsStringSync();
+        remark = 'Android test profile';
+      }
+    } on FileSystemException {
+      // Optional local smoke-test hook; ignore when the file is absent or
+      // unreadable on non-Android platforms.
+    }
 
     // Plugin initialization
     flutterVless
@@ -128,6 +159,18 @@ class _HomePageState extends State<HomePage> {
             .showSnackBar(SnackBar(content: Text('Import error: $e')));
       }
     }
+  }
+
+  bool _canStop(VlessStatus status) {
+    return switch (status.connectionState) {
+      VlessConnectionState.connected ||
+      VlessConnectionState.connecting ||
+      VlessConnectionState.disconnecting =>
+        true,
+      VlessConnectionState.disconnected ||
+      VlessConnectionState.unknown =>
+        false,
+    };
   }
 
   Future<void> _showBypassEditor() async {
@@ -234,8 +277,7 @@ class _HomePageState extends State<HomePage> {
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () async {
-          final state = vlessStatus.value.state.toUpperCase();
-          if (state == 'CONNECTED') {
+          if (_canStop(vlessStatus.value)) {
             await _disconnect();
           } else {
             await _connect();
@@ -249,9 +291,8 @@ class _HomePageState extends State<HomePage> {
         label: ValueListenableBuilder<VlessStatus>(
           valueListenable: vlessStatus,
           builder: (context, status, child) {
-            final s = status.state.toUpperCase();
             return Text(
-              s == 'CONNECTED' ? 'Disconnect' : 'Connect',
+              _canStop(status) ? 'Disconnect' : 'Connect',
               style: const TextStyle(color: Colors.black87),
             );
           },

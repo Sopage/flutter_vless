@@ -864,22 +864,44 @@ std::optional<fs::path> VpnService::FindXrayAssets(const fs::path& executable_pa
 
 // Extract VPN server address from Xray config
 std::string VpnService::ExtractServerAddress(const std::string& config) {
+  auto normalize_address = [](std::string address) -> std::string {
+    if (address.size() > 2 && address.front() == '[') {
+      const size_t closing_bracket = address.find(']');
+      if (closing_bracket != std::string::npos) {
+        return address.substr(1, closing_bracket - 1);
+      }
+    }
+
+    const size_t colon_count = static_cast<size_t>(
+        std::count(address.begin(), address.end(), ':'));
+    if (colon_count == 1) {
+      const size_t colon = address.rfind(':');
+      if (colon != std::string::npos && colon > 0) {
+        return address.substr(0, colon);
+      }
+    }
+
+    return address;
+  };
+
   // Try multiple patterns to find server address
   std::vector<std::regex> patterns = {
     // Pattern 1: Look for "address" field in outbounds
     std::regex("\"outbounds\"[\\s\\S]{0,2000}?\"address\"\\s*:\\s*\"([^\"]+)\""),
     // Pattern 2: Look for protocol + address together
-    std::regex("\"protocol\"\\s*:\\s*\"(?:vless|vmess|trojan|shadowsocks)\"[\\s\\S]{0,1000}?\"address\"\\s*:\\s*\"([^\"]+)\""),
+    std::regex("\"protocol\"\\s*:\\s*\"(?:vless|vmess|trojan|shadowsocks|hysteria)\"[\\s\\S]{0,1000}?\"address\"\\s*:\\s*\"([^\"]+)\""),
     // Pattern 3: Look in vnext array
     std::regex("\"vnext\"[\\s\\S]{0,1000}?\"address\"\\s*:\\s*\"([^\"]+)\""),
     // Pattern 4: Look in servers array
     std::regex("\"servers\"[\\s\\S]{0,1000}?\"address\"\\s*:\\s*\"([^\"]+)\""),
+    // Pattern 5: WireGuard stores remote server as peer endpoint host:port
+    std::regex("\"protocol\"\\s*:\\s*\"wireguard\"[\\s\\S]{0,2000}?\"endpoint\"\\s*:\\s*\"([^\"]+)\""),
   };
   
   std::smatch match;
   for (const auto& pattern : patterns) {
     if (std::regex_search(config, match, pattern)) {
-      std::string address = match[1].str();
+      std::string address = normalize_address(match[1].str());
       // Skip localhost addresses
       if (address != "127.0.0.1" && address != "localhost" && address != "::1") {
         std::cerr << "VPN Service: Extracted server address: " << address << std::endl;

@@ -40,6 +40,10 @@ class VmessURL extends FlutterVlessURL {
       publicKey: null,
       shortId: null,
       spiderX: null,
+      pinnedPeerCertSha256:
+          rawConfig['pcs'] ?? rawConfig['pinnedPeerCertSha256'],
+      verifyPeerCertByName:
+          rawConfig['vcn'] ?? rawConfig['verifyPeerCertByName'],
     );
   }
   late final Map<String, dynamic> rawConfig;

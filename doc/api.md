@@ -161,10 +161,15 @@ Supported input:
 - `trojan://`
 - `ss://`
 - `socks://`
+- `hysteria2://`
+- `hy2://`
 - raw Xray JSON
 - base64 subscription payloads
 - Clash YAML
 - sing-box JSON
+
+Clash YAML and sing-box JSON imports can also produce generated Xray configs
+for supported profile objects such as WireGuard and Hysteria2.
 
 If a subscription contains multiple supported profiles, `parse()` returns the
 first one. Use `parseMany()` to keep the full list.
@@ -177,8 +182,8 @@ Parses every supported profile from a subscription-style payload.
 final profiles = FlutterVless.parseMany(subscriptionText);
 ```
 
-Unsupported sing-box-only protocols are skipped intentionally instead of being
-converted into broken Xray JSON.
+Unsupported or not-yet-mapped protocols are skipped intentionally instead of
+being converted into broken Xray JSON.
 
 ## `parseFromURL()`
 
@@ -195,6 +200,8 @@ Use this only when the input is already known to be one of:
 - `trojan://`
 - `ss://`
 - `socks://`
+- `hysteria2://`
+- `hy2://`
 
 For clipboard imports, subscriptions, raw JSON, Clash YAML, or sing-box JSON,
 prefer `parse()` or `parseMany()`.
@@ -232,4 +239,3 @@ void handleStatus(VlessStatus status) {
   }
 }
 ```
-

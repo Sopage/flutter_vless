@@ -20,6 +20,13 @@ Common causes:
 - the wrong platform guide was followed
 - a proxy-only example was copied into a VPN flow, or vice versa
 
+On macOS Packet Tunnel, do not treat `Delay` or Xray's internal SOCKS checks as
+complete proof that browser traffic can flow. A healthy macOS VPN run should
+also show app-side raw TCP probes through the selected `utun` route and growing
+download counters. If `raw-http-ip-literal-bound-utun*` fails with
+`No route to host`, inspect the Packet Tunnel route model before changing the
+Xray config.
+
 ## `parse()` Fails On A Link
 
 Check whether the input really is one of the supported formats:
@@ -29,6 +36,8 @@ Check whether the input really is one of the supported formats:
 - `trojan://`
 - `ss://`
 - `socks://`
+- `hysteria2://`
+- `hy2://`
 - raw Xray JSON
 - base64 subscription text
 - Clash YAML
@@ -62,6 +71,8 @@ Check:
 - confirm the Packet Tunnel target is signed
 - confirm the App Group is shared between the app and the extension
 - for macOS, read the packet tunnel architecture note before changing routing or DNS
+- for macOS `1.1.3`, keep explicit Packet Tunnel DNS enabled and DNS host-route
+  exclusions disabled unless a real smoke test proves another route model
 
 ## Windows Specific
 

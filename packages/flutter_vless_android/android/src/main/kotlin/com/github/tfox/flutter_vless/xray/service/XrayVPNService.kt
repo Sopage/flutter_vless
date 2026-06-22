@@ -45,28 +45,29 @@ class XrayVPNService : VpnService() {
             return START_NOT_STICKY
         }
 
-        // Create notification channel and start foreground immediately to prevent crash
-        createNotificationChannel()
-        val notification = createNotification("VPN Service Running")
-        try {
-            if (Build.VERSION.SDK_INT >= 34) {
-                // For Android 14+, specify the foreground service type
-                // Use a constant value if the symbol is not available in compile SDK
-                // FOREGROUND_SERVICE_TYPE_SPECIAL_USE = 32
-                startForeground(1, notification, 32) 
-            } else {
-                startForeground(1, notification)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to start foreground", e)
-        }
-
-        // 1. Parse the command (START or STOP)
         val command = if (Build.VERSION.SDK_INT >= 33) {
             intent.getSerializableExtra("COMMAND", AppConfigs.V2RAY_SERVICE_COMMANDS::class.java)
         } else {
             @Suppress("DEPRECATION")
             intent.getSerializableExtra("COMMAND") as? AppConfigs.V2RAY_SERVICE_COMMANDS
+        }
+
+        if (command == AppConfigs.V2RAY_SERVICE_COMMANDS.STOP_SERVICE) {
+            stopAll()
+            return START_NOT_STICKY
+        }
+
+        // Create notification channel and start foreground immediately to prevent crash.
+        createNotificationChannel()
+        val notification = createNotification("VPN Service Running")
+        try {
+            if (Build.VERSION.SDK_INT >= 34) {
+                startForeground(1, notification, FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            } else {
+                startForeground(1, notification)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start foreground", e)
         }
 
         if (command == AppConfigs.V2RAY_SERVICE_COMMANDS.START_SERVICE) {
@@ -98,8 +99,8 @@ class XrayVPNService : VpnService() {
                     stopSelf()
                 }
             }
-        } else if (command == AppConfigs.V2RAY_SERVICE_COMMANDS.STOP_SERVICE) {
-            stopAll()
+        } else {
+            stopSelf()
         }
 
         return START_STICKY
@@ -132,18 +133,18 @@ class XrayVPNService : VpnService() {
 
             // Add routes to exclude the server IP (to prevent routing loop)
             val serverIp = config.CONNECTED_V2RAY_SERVER_ADDRESS
-            if (serverIp.isNotEmpty() && !serverIp.contains(":")) { // Simple check for IPv4
-                 try {
-                     Log.d(TAG, "Excluding server IP: $serverIp")
-                     val excludedRoutes = excludeIp(serverIp)
-                     for (route in excludedRoutes) {
-                         val parts = route.split("/")
-                         builder.addRoute(parts[0], parts[1].toInt())
-                     }
-                 } catch (e: Exception) {
-                     Log.e(TAG, "Failed to exclude server IP, falling back to 0.0.0.0/0", e)
-                     builder.addRoute("0.0.0.0", 0)
-                 }
+            if (serverIp.isIpv4Literal()) {
+                try {
+                    Log.d(TAG, "Excluding server IP: $serverIp")
+                    val excludedRoutes = excludeIp(serverIp)
+                    for (route in excludedRoutes) {
+                        val parts = route.split("/")
+                        builder.addRoute(parts[0], parts[1].toInt())
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to exclude server IP, falling back to 0.0.0.0/0", e)
+                    builder.addRoute("0.0.0.0", 0)
+                }
             } else {
                 builder.addRoute("0.0.0.0", 0)
             }
@@ -326,6 +327,16 @@ class XrayVPNService : VpnService() {
         return "${(ip shr 24) and 0xFF}.${(ip shr 16) and 0xFF}.${(ip shr 8) and 0xFF}.${ip and 0xFF}"
     }
 
+    private fun String.isIpv4Literal(): Boolean {
+        val parts = split(".")
+        if (parts.size != 4) return false
+        return parts.all { part ->
+            part.isNotEmpty() &&
+                part.all { it.isDigit() } &&
+                part.toIntOrNull()?.let { it in 0..255 } == true
+        }
+    }
+
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channelId = "vpn_service_channel"
@@ -361,5 +372,6 @@ class XrayVPNService : VpnService() {
 
     companion object {
         private const val TAG = "XrayVPNService"
+        private const val FOREGROUND_SERVICE_TYPE_SPECIAL_USE = 0x40000000
     }
 }

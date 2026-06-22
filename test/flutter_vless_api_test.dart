@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_vless/flutter_vless.dart';
@@ -86,6 +88,44 @@ void main() {
       'proxy_only': false,
       'notificationDisconnectButtonName': 'STOP',
     });
+  });
+
+  test('P0 startVless normalizes Xray 26.x incompatible config fields',
+      () async {
+    final plugin = FlutterVless(onStatusChanged: (_) {});
+
+    await plugin.startVless(
+      remark: 'Legacy raw JSON',
+      config: jsonEncode({
+        'outbounds': [
+          {
+            'protocol': 'vless',
+            'streamSettings': {
+              'network': 'XHTTP',
+              'security': 'tls',
+              'tlsSettings': {
+                'allowInsecure': false,
+                'serverName': 'edge.example.com',
+              },
+              'xHTTPSettings': {'path': '/'},
+            },
+          }
+        ],
+      }),
+    );
+
+    final sentConfig = jsonDecode(
+      (calls.single.arguments as Map<Object?, Object?>)['config'] as String,
+    ) as Map<String, dynamic>;
+    final outbound = (sentConfig['outbounds'] as List<dynamic>).single
+        as Map<String, dynamic>;
+    final stream = outbound['streamSettings'] as Map<String, dynamic>;
+    final tls = stream['tlsSettings'] as Map<String, dynamic>;
+
+    expect(stream['network'], 'xhttp');
+    expect(stream.containsKey('xHTTPSettings'), isFalse);
+    expect(stream['xhttpSettings'], {'path': '/'});
+    expect(tls.containsKey('allowInsecure'), isFalse);
   });
 
   test('P0 getServerDelay validates JSON and forwards probe URL', () async {

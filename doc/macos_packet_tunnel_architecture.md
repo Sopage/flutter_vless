@@ -18,8 +18,10 @@ tun2socks. The important final evidence was:
 - `SOCKS HTTP health check: ok 1.1.1.1/cdn-cgi/trace HTTP/1.1 301 Moved Permanently`
 - `SOCKS URLSession HTTPS health check: ok status=204`
 - Default IPv4 route moves to `utun`.
-- DNS server host routes stay on the primary interface (`en0` in the test logs).
+- Packet Tunnel DNS is published as `1.1.1.1` / `8.8.8.8` with
+  `matchDomains = [""]`.
 - The proxy server IPv4 host route stays on the primary interface.
+- App-side raw TCP probes through the selected `utun` route can connect.
 - Upload and download counters both grow over time.
 
 ## Runtime Shape
@@ -84,46 +86,44 @@ These settings are deliberate and should not be changed casually.
 | Area | Current value | Why it exists | What breaks if changed |
 | --- | --- | --- | --- |
 | Tunnel MTU | `1280` | Conservative MTU for nested tunnel/proxy transport. It avoids fragmentation-sensitive stalls across XHTTP/TLS paths. | Pages can partially load, large downloads may hang, or HEV may show traffic without useful browser progress. |
-| Tunnel IPv4 address | `198.18.0.1/16` | Uses benchmarking/test-net space for the local utun address and avoids colliding with normal LAN ranges. | Collisions with LAN/VPN/private routes can create confusing route choices. |
-| Included route | IPv4 default route through utun | Makes Packet Tunnel mode route app traffic through HEV/Xray. | Without it, only selected traffic enters the tunnel and the VPN appears connected but does not carry browser traffic. |
-| DNS host exclusions | `1.1.1.1/32`, `8.8.8.8/32` outside utun | Allows macOS resolver packets to reach DNS even while the default route is in the tunnel. | DNS can recursively depend on a tunnel path that is not ready or not appropriate, causing browser stalls before TCP sessions begin. |
+| Tunnel remote label | `127.0.0.1` | Matches the current sing-box Apple pattern: this value identifies the Network Extension endpoint and is not the VLESS server or TUN gateway. | Treating this as the gateway can leave macOS with an unusable self-peer route. |
+| Tunnel IPv4 address | `198.18.0.1/24` | Uses benchmarking/test-net space for the local utun address and avoids colliding with normal LAN ranges. The default route gateway is the same local TUN address. | The previous `/30` setup still produced `198.18.0.2 --> 198.18.0.2` self-peer routes and app sockets failed with `No route to host`. |
+| Included route | IPv4 default route through utun with gateway `198.18.0.1` | Makes Packet Tunnel mode route app traffic through HEV/Xray. | Without it, only selected traffic enters the tunnel and the VPN appears connected but does not carry browser traffic. |
+| DNS host exclusions | disabled | The working macOS path publishes explicit Packet Tunnel DNS and lets resolver traffic follow the validated utun path. | Reintroducing DNS host exclusions can create stale/cloned resolver routes and make behavior depend on the pre-VPN network. |
 | Server host exclusion | resolved proxy server IPv4 outside utun | Prevents the Xray outbound connection to the VPN server from being routed back into the same Packet Tunnel. | Routing loop: Xray tries to reach the server through the tunnel that depends on Xray reaching the server. |
 | IPv6 | disabled in Packet Tunnel | The current validated path is IPv4-only. macOS can create IPv4-mapped IPv6 routes that bypass the explicit IPv4 server exclusion. | Server traffic may be sent through another utun route, starving the Xray outbound connection. |
 | DNS settings | explicit `NEDNSSettings` with `matchDomains = [""]` | macOS needs a real default resolver while the Packet Tunnel is active. | With `dnsSettings = nil`, `scutil --dns` can show an empty unreachable resolver and browsers stall at DNS. |
+| Profile route flags | `includeAllNetworks=false`, `excludeLocalNetworks=false`, `enforceRoutes=false` | Keeps the `NETunnelProviderProtocol` flags close to current sing-box Apple defaults; actual capture is defined by the provider's routes. | `enforceRoutes=true` can force macOS into stale utun-scoped route behavior after startup or teardown. |
 | Xray DNS | `queryStrategy = UseIPv4`, optional host mapping for server domain | Keeps Xray's own resolution aligned with the IPv4-only packet path while preserving server domain semantics. | Xray may prefer IPv6 or resolve differently than the route exclusion, creating mismatched routing. |
 
-## DNS: Resolver Versus Route
+## DNS And Route Model
 
-The final working configuration intentionally combines two ideas that look
-contradictory at first:
+The final working configuration is intentionally simple:
 
 1. Publish DNS servers through Network Extension:
 
    ```swift
-   let settings = NEDNSSettings(servers: ["1.1.1.1", "8.8.8.8"])
-   settings.matchDomains = [""]
+   let dnsSettings = NEDNSSettings(servers: ["1.1.1.1", "8.8.8.8"])
+   dnsSettings.matchDomains = [""]
+   settings.dnsSettings = dnsSettings
    ```
 
-2. Exclude the DNS server host routes from the VPN:
-
-   ```text
-   route-dns-1.1.1.1 -> gateway 10.0.0.1, interface en0
-   route-dns-8.8.8.8 -> gateway 10.0.0.1, interface en0
-   ```
+2. Do not add DNS host-route exclusions.
 
 This is the working compromise on macOS:
 
 - `NEDNSSettings` gives the system resolver real nameservers while the tunnel is
   active.
-- Host route exclusions keep those nameserver packets reachable outside the
-  Packet Tunnel.
-- Normal application traffic still follows the default utun route.
+- Resolver traffic follows the same validated Packet Tunnel path as normal app
+  traffic.
+- Only the remote proxy server IPs are excluded from the tunnel to prevent Xray
+  self-routing.
 
-Do not judge DNS only by `scutil --dns if_index`. In the final logs,
-`scutil --dns` reports `1.1.1.1` and `8.8.8.8` with the utun interface index,
-but `route get 1.1.1.1` and `route get 8.8.8.8` correctly point to `en0`.
-The route lookup is the important proof that resolver packets can leave through
-the physical interface.
+Do not judge readiness only by `NEVPNStatus.connected`. The useful proof is an
+app-side raw TCP probe through the selected utun route plus growing download
+counters. If `raw-http-ip-literal-bound-utun*` fails with `No route to host`,
+the Packet Tunnel route is still broken even when Xray's internal SOCKS health
+checks pass.
 
 ### DNS States We Tried And Rejected
 
@@ -134,10 +134,10 @@ the physical interface.
 - Result: Xray/HEV may still pass literal-IP health checks, but browsers can
   stall before opening useful TCP sessions.
 
-DNS through the Packet Tunnel without host exclusions:
+DNS through the Packet Tunnel with the old self-peer route:
 
-- Symptom: HEV sees activity, often mostly UDP, but browser page loads do not
-  progress reliably.
+- Symptom: `route get 1.1.1.1` selects utun, but raw app sockets fail with
+  `No route to host`.
 - Result: It is easy to get upload counters and a connected status with little
   or no downloaded page data.
 
@@ -486,10 +486,11 @@ Forced local tunnel inbound(s) in_proxy to proxy outbound proxy
 Added UDP/443 block rule to force browser TCP fallback
 Using local Xray inbound port 10807, server=<domain>
 Configured packet tunnel MTU=1280
-Excluded DNS route(s): 1.1.1.1,8.8.8.8
+DNS route exclusions disabled; using Packet Tunnel DNS settings
 Excluded IPv4 server route(s): <ip>
+IPv4 settings local=198.18.0.1/24 gateway=198.18.0.1 remoteLabel=127.0.0.1 subnetMask=255.255.255.0 includedRoutes=default excludedRoutes=<n>
 IPv6 tunnel routing disabled; using IPv4-only packet tunnel
-System DNS published with route exclusions: 1.1.1.1,8.8.8.8
+Packet tunnel DNS servers=1.1.1.1,8.8.8.8 matchDomains=default
 ```
 
 Provider health:
@@ -507,8 +508,8 @@ System routes:
 
 ```text
 route-default -> interface utun*
-route-dns-1.1.1.1 -> interface en0
-route-dns-8.8.8.8 -> interface en0
+route-dns-1.1.1.1 -> interface utun*
+route-dns-8.8.8.8 -> interface utun*
 <proxy-server-ip> -> interface en0
 scutil --dns -> nameserver[0] : 1.1.1.1, nameserver[1] : 8.8.8.8
 ```
@@ -601,12 +602,13 @@ Because macOS can create an empty unreachable default resolver when a Packet
 Tunnel is active with no `NEDNSSettings`. That makes browsers stall before they
 open TCP sessions, even if literal-IP Xray checks pass.
 
-### Why not route DNS through the tunnel?
+### Why not exclude DNS host routes?
 
-It can work for some configurations, but in this XHTTP Packet Tunnel path it
-created a fragile startup dependency and produced UDP-heavy traffic without
-reliable browser progress. Excluding DNS host routes keeps system resolution
-available while normal app traffic remains tunneled.
+The validated macOS fix publishes Packet Tunnel DNS and routes resolver traffic
+through the same utun path as normal app traffic. Excluding DNS host routes was
+part of an earlier workaround, but it made behavior depend on the pre-VPN
+network and did not fix the real failure: macOS had created an unusable utun
+self-peer route.
 
 ### Why not enable IPv6 now?
 
@@ -691,9 +693,9 @@ problem, not a Packet Tunnel routing regression by itself.
 | Server TCP check fails | route exclusion or network reachability | `Excluded IPv4 server route(s)`, `route get <server-ip>` |
 | SOCKS inbound fails | Xray did not start or wrong inbound | `XRay started successfully`, inbound port |
 | SOCKS CONNECT ok but HTTP fails | Xray outbound/routing/transport | `Forced local tunnel inbound`, `SOCKS HTTP health check` |
-| Literal-IP HTTP ok but browser stuck | system DNS or QUIC behavior | `scutil --dns`, DNS route snapshots, UDP/443 rule |
+| Literal-IP HTTP ok but browser stuck | system DNS, QUIC, or app route behavior | `scutil --dns`, `raw-http-ip-literal-bound-utun*`, UDP/443 rule |
 | Only upload grows | no response path | traffic stats, HEV tail, server route |
-| `scutil --dns` empty resolver | DNS settings missing | `System DNS published with route exclusions` |
+| `scutil --dns` empty resolver | DNS settings missing | `Packet tunnel DNS servers=... matchDomains=default` |
 | Server route points to utun | routing loop risk | `route-default`, `route get <server-ip>` |
 
 ## Maintenance Rules
@@ -703,7 +705,9 @@ When changing the macOS Packet Tunnel path:
 - Keep a literal-IP HTTP health check.
 - Keep a real `URLSession` HTTPS health check.
 - Keep route snapshots for default, DNS servers, and server IP.
-- Keep DNS resolver publication and DNS host route exclusions together.
+- Keep explicit Packet Tunnel DNS publication enabled.
+- Keep DNS host-route exclusions disabled unless a real macOS smoke test proves
+  the alternative route model.
 - Keep server route exclusion based on the same IPv4 address family Xray will
   use.
 - Keep Xray outbound domain semantics intact.

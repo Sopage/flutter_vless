@@ -43,9 +43,14 @@ void main() {
               ],
             },
             'streamSettings': {
-              'network': 'xhttp',
-              'security': 'none',
-              'xhttpSettings': {
+              'network': 'XHTTP',
+              'security': 'tls',
+              'tlsSettings': {
+                'allowInsecure': false,
+                'serverName': 'edge.example.com',
+                'alpn': ['h3'],
+              },
+              'xHTTPSettings': {
                 'host': 's3.storage.selcloud.ru',
                 'mode': 'stream-up',
                 'path': '/my-bucket',
@@ -63,7 +68,18 @@ void main() {
       expect(parsed.remark, 'Happ XHTTP JSON');
       expect(firstVnextUser(config)['encryption'], visionSeedEncryption);
       expect(streamSettings(config)['network'], 'xhttp');
-      expect(streamSettings(config)['security'], 'none');
+      expect(streamSettings(config)['security'], 'tls');
+      expect(streamSettings(config).containsKey('xHTTPSettings'), isFalse);
+      expect(streamSettings(config)['xhttpSettings'], {
+        'host': 's3.storage.selcloud.ru',
+        'mode': 'stream-up',
+        'path': '/my-bucket',
+      });
+      expect(
+        (streamSettings(config)['tlsSettings'] as Map<String, dynamic>)
+            .containsKey('allowInsecure'),
+        isFalse,
+      );
     });
 
     test('accepts JSON arrays by selecting the first config object', () {
