@@ -95,8 +95,9 @@ com.example.sensitiveapp
                     _section(
                         'Blocked domains (one per line)', _domainsController),
                     const SizedBox(height: 12),
-                    _section('Blocked apps (package names, one per line)',
-                        _appsController),
+                    if (Platform.isAndroid)
+                      _section('Blocked apps (package names, one per line)',
+                          _appsController),
                   ],
                 ),
               ),
