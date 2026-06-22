@@ -1,3 +1,7 @@
+## 1.1.3
+
+* Fixed macOS SwiftPM builds by explicitly importing the `CXRay` shim before using `XRayLoggerProtocol`.
+
 ## 1.1.2
 
 * Fixed Packet Tunnel setup for hosted Pub packages whose generated SwiftPM symlink includes the package version.

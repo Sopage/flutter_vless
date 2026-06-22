@@ -7,9 +7,7 @@ import AppKit
 import NetworkExtension
 import Combine
 
-#if canImport(CXRay)
 import CXRay
-#endif
 
 import os
 import CFNetwork
