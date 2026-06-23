@@ -103,9 +103,7 @@ jobs:
           arch: x86_64
           profile: pixel_6
           script: |
-            cd example
-            flutter pub get
-            flutter test integration_test/android_xray_runtime_smoke_test.dart -d emulator-5554
+            (cd example && flutter pub get && flutter test integration_test/android_xray_runtime_smoke_test.dart -d emulator-5554)
 
   ios:
     name: iOS Swift and Xcode build
