@@ -1,12 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
-XRAY_MOBILE_REPO="${XRAY_MOBILE_REPO:-https://github.com/EbrahimTahernejad/xray-mobile}"
-XRAY_MOBILE_REF="${XRAY_MOBILE_REF:-1.8.1}"
-XRAY_CORE_VERSION="${XRAY_CORE_VERSION:-v26.6.1}"
-XRAY_CORE_REF="${XRAY_CORE_REF:-94ffd50060f1cfd5d7482ec90a23a92bdefdff68}"
-IOS_VERSION="${IOS_VERSION:-15.0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+XRAY_MOBILE_DIR="${XRAY_MOBILE_DIR:-$REPO_ROOT/third_party/xray-mobile}"
+XRAY_CORE_VERSION="${XRAY_CORE_VERSION:-v26.6.22}"
+XRAY_CORE_REF="${XRAY_CORE_REF:-b99c3e56574fb0317608c49dd1dd9af816db7a9e}"
+IOS_VERSION="${IOS_VERSION:-15.0}"
 BUILD_DIR="${BUILD_DIR:-$SCRIPT_DIR/build_xray_ios}"
 OUTPUT_XCFRAMEWORK="${OUTPUT_XCFRAMEWORK:-$SCRIPT_DIR/XRay.xcframework}"
 
@@ -31,8 +31,15 @@ fi
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
-git clone --depth 1 --branch "$XRAY_MOBILE_REF" "$XRAY_MOBILE_REPO" "$BUILD_DIR/xray-mobile"
+if [ ! -f "$XRAY_MOBILE_DIR/go.mod" ]; then
+    echo "Error: vendored xray-mobile source not found at $XRAY_MOBILE_DIR"
+    exit 1
+fi
+
+mkdir -p "$BUILD_DIR/xray-mobile"
+cp -R "$XRAY_MOBILE_DIR"/. "$BUILD_DIR/xray-mobile"
 cd "$BUILD_DIR/xray-mobile"
+echo "Using vendored xray-mobile source from $XRAY_MOBILE_DIR"
 
 # Xray-core uses calendar release tags but keeps the original module path.
 # Pin by the release commit so Go resolves it to the matching v1.YYMMDD.0 module version.
@@ -40,21 +47,7 @@ go get "github.com/xtls/xray-core@$XRAY_CORE_REF"
 go get -tool golang.org/x/mobile/cmd/gobind
 go mod tidy
 
-cat >> xray-mobile.go <<'GOEOF'
-
-func GetVersion() string {
-	return core.Version()
-}
-
-func MeasureDelay(url string) (int64, error) {
-	return MeasureOutboundDelay("", url)
-}
-
-func MeasureOutboundDelay(ConfigureFileContent string, url string) (int64, error) {
-	return 0, nil
-}
-GOEOF
-
+rm -rf "$OUTPUT_XCFRAMEWORK"
 gomobile bind \
     -a \
     -ldflags="-s -w -extldflags -lresolv" \

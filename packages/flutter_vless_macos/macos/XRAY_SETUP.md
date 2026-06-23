@@ -1,6 +1,6 @@
 # Xray-core Setup for macOS
 
-This plugin uses **Xray-core binary directly** v25.10.15+
+This plugin uses **Xray-core** `v26.6.22` through the bundled framework for normal plugin flows. If you use an external `xray` executable for manual testing, keep it on `v26.6.22` or newer.
 
 ## Quick Setup
 
@@ -57,7 +57,7 @@ Check if Xray is found:
 ./xray version
 
 # Should output something like:
-# Xray 25.10.15+ (Xray, Penetrates Everything.) Custom
+# Xray 26.6.22 (Xray, Penetrates Everything.) b99c3e5
 ```
 
 ## Network Extension Considerations
@@ -125,4 +125,3 @@ Xray uses HTTP API (default: `127.0.0.1:10085`) for statistics. Ensure your conf
 - [Xray-core Releases](https://github.com/XTLS/Xray-core/releases)
 - [Xray Documentation](https://xtls.github.io/en/)
 - [Network Extension Guide](https://developer.apple.com/documentation/networkextension)
-

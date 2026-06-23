@@ -24,6 +24,13 @@ FOUNDATION_EXPORT BOOL XRayMeasureDelay(NSString* _Nullable url, int64_t* _Nulla
 
 FOUNDATION_EXPORT BOOL XRayMeasureOutboundDelay(NSString* _Nullable ConfigureFileContent, NSString* _Nullable url, int64_t* _Nullable ret0_, NSError* _Nullable* _Nullable error);
 
+/**
+ * QueryStats returns all traffic counters as "name>>>value\n" lines.
+Uses VisitCounters which is available in xray-core features/stats.Manager.
+Caller parses "uplink" and "downlink" from counter names.
+ */
+FOUNDATION_EXPORT NSString* _Nonnull XRayQueryStats(NSString* _Nullable tag);
+
 FOUNDATION_EXPORT void XRaySetMemoryLimit(void);
 
 FOUNDATION_EXPORT BOOL XRayStart(NSData* _Nullable config, id<XRayLogger> _Nullable logger, NSError* _Nullable* _Nullable error);

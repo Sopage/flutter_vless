@@ -1,0 +1,5 @@
+*.a binary
+*.dat binary
+*.so binary
+example/macos/Runner/xray/xray binary
+ios/XRay.xcframework/**/XRay binary

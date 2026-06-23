@@ -1,3 +1,0 @@
-[submodule "packages/flutter_vless_macos/macos/build_xray_macos/xray-mobile"]
-	path = packages/flutter_vless_macos/macos/build_xray_macos/xray-mobile
-	url = https://github.com/EbrahimTahernejad/xray-mobile

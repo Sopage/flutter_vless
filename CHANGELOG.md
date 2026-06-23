@@ -1,5 +1,6 @@
 ## 1.1.3
 
+* Updated bundled and packaged Xray runtimes to upstream Xray-core `v26.6.22` for Android, iOS, and macOS.
 * Fixed macOS VPN mode for VLESS + XHTTP + TLS Packet Tunnel configs by matching the validated Apple route model: `tunnelRemoteAddress = 127.0.0.1`, `198.18.0.1/24` local TUN address, default route gateway `198.18.0.1`, explicit Packet Tunnel DNS, and no DNS host-route exclusions.
 * Added macOS route/DNS diagnostics that distinguish a healthy Xray/SOCKS path from a broken app-side `utun` route, including raw TCP probes bound to the selected interface.
 * Documented the working macOS Packet Tunnel invariants and golden log lines in `doc/macos_packet_tunnel_architecture.md` so future route/DNS changes do not regress the VLESS XHTTP path.

@@ -4,7 +4,7 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'flutter_vless'
-  s.version          = '1.1.1'
+  s.version          = '1.1.3'
   s.summary          = 'Flutter VLESS/VMESS proxy and VPN plugin with XRay core.'
   s.description      = <<-DESC
 Flutter plugin to run VLESS/VMESS as a local proxy and VPN on iOS with XRay core.
@@ -20,10 +20,10 @@ Flutter plugin to run VLESS/VMESS as a local proxy and VPN on iOS with XRay core
   # Flutter.framework does not contain a i386 slice.
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES', 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386' }
   s.static_framework = true
-  xray_version = ENV['FLUTTER_VLESS_XRAY_VERSION'] || 'v26.6.1'
-  xray_release_tag = ENV['FLUTTER_VLESS_XRAY_RELEASE_TAG'] || 'xray-ios-v26.6.1'
+  xray_version = ENV['FLUTTER_VLESS_XRAY_VERSION'] || 'v26.6.22'
+  xray_release_tag = ENV['FLUTTER_VLESS_XRAY_RELEASE_TAG'] || 'xray-ios-v26.6.22'
   xray_url = ENV['FLUTTER_VLESS_XRAY_URL'] || "https://github.com/XIIIFOX/flutter_vless/releases/download/#{xray_release_tag}/XRay.xcframework.zip"
-  xray_checksum = ENV['FLUTTER_VLESS_XRAY_CHECKSUM'] || '13b512b31b394a701de95d1ea9ae7a8aad091d5b8d8db6d2e042374015254217'
+  xray_checksum = ENV['FLUTTER_VLESS_XRAY_CHECKSUM'] || '72b0a0bbbdce320a4ced885d22c118991e4cf4c50d25a8e90eb90560b3862c9a'
 
   s.prepare_command = <<-CMD
     set -e

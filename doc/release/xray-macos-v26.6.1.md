@@ -7,6 +7,7 @@ Changes:
 * Rebuilt `XRay.xcframework` against XTLS/Xray-core `v26.6.1`.
 * Updated the macOS SwiftPM binary target and CocoaPods default release tag to `xray-macos-v26.6.1`.
 * Kept the static-library xcframework packaging used by the macOS plugin and tunnel-support target.
+* Build source now comes from the vendored `third_party/xray-mobile` Go wrapper instead of cloning the upstream wrapper repository.
 
 Upstream:
 

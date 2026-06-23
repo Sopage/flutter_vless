@@ -1,9 +1,10 @@
 # Build XRay.xcframework
 
-The iOS plugin uses `XRay.xcframework`, generated with `gomobile bind` from `github.com/EbrahimTahernejad/xray-mobile`.
+The iOS plugin uses `XRay.xcframework`, generated with `gomobile bind` from
+the vendored `third_party/xray-mobile` Go wrapper.
 
-Current target Xray-core version: `v26.6.1`.
-Release commit used by the script: `94ffd50060f1cfd5d7482ec90a23a92bdefdff68`.
+Current target Xray-core version: `v26.6.22`.
+Release commit used by the script: `b99c3e56574fb0317608c49dd1dd9af816db7a9e`.
 
 Requirements:
 
@@ -33,7 +34,11 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./ios/build_xray_ios.sh
 Useful overrides:
 
 ```bash
-XRAY_CORE_REF=94ffd50060f1cfd5d7482ec90a23a92bdefdff68 IOS_VERSION=15.0 ./build_xray_ios.sh
+XRAY_MOBILE_DIR=../third_party/xray-mobile XRAY_CORE_REF=b99c3e56574fb0317608c49dd1dd9af816db7a9e IOS_VERSION=15.0 ./build_xray_ios.sh
 ```
+
+The build script copies `XRAY_MOBILE_DIR` into `ios/build_xray_ios/xray-mobile`
+before running `go get` and `go mod tidy`, so the tracked vendored source is not
+mutated by release builds.
 
 Note: Xcode Command Line Tools are not enough because `gomobile bind -target=ios` needs the `iphoneos` and `iphonesimulator` SDKs.

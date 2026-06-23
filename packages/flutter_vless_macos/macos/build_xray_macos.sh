@@ -1,12 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
-XRAY_MOBILE_REPO="${XRAY_MOBILE_REPO:-https://github.com/EbrahimTahernejad/xray-mobile}"
-XRAY_MOBILE_REF="${XRAY_MOBILE_REF:-1.8.1}"
-XRAY_CORE_VERSION="${XRAY_CORE_VERSION:-v26.6.1}"
-XRAY_CORE_REF="${XRAY_CORE_REF:-94ffd50060f1cfd5d7482ec90a23a92bdefdff68}"
-XRAY_MACOS_DEPLOYMENT_TARGET="${XRAY_MACOS_DEPLOYMENT_TARGET:-13.0}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+XRAY_MOBILE_DIR="${XRAY_MOBILE_DIR:-$REPO_ROOT/third_party/xray-mobile}"
+XRAY_CORE_VERSION="${XRAY_CORE_VERSION:-v26.6.22}"
+XRAY_CORE_REF="${XRAY_CORE_REF:-b99c3e56574fb0317608c49dd1dd9af816db7a9e}"
+XRAY_MACOS_DEPLOYMENT_TARGET="${XRAY_MACOS_DEPLOYMENT_TARGET:-13.0}"
 BUILD_DIR="${BUILD_DIR:-$SCRIPT_DIR/build_xray_macos}"
 OUTPUT_XCFRAMEWORK="${OUTPUT_XCFRAMEWORK:-$SCRIPT_DIR/XRay.xcframework}"
 
@@ -39,13 +39,15 @@ mkdir -p "$BUILD_DIR"
 # Use a temporary name for gomobile output to avoid confusion
 GOMOBILE_XCFW="$BUILD_DIR/Gomobile.xcframework"
 
-git clone --depth 1 --branch "$XRAY_MOBILE_REF" "$XRAY_MOBILE_REPO" "$BUILD_DIR/xray-mobile"
-cd "$BUILD_DIR/xray-mobile"
+if [ ! -f "$XRAY_MOBILE_DIR/go.mod" ]; then
+    echo "Error: vendored xray-mobile source not found at $XRAY_MOBILE_DIR"
+    exit 1
+fi
 
-# Copy our enhanced xray-mobile.go FIRST (before go mod tidy)
-# so that tidy picks up our extra imports (stats, etc.)
-cp "$SCRIPT_DIR/xray-mobile-override.go" ./xray-mobile.go
-echo "Using enhanced xray-mobile.go with QueryStats support"
+mkdir -p "$BUILD_DIR/xray-mobile"
+cp -R "$XRAY_MOBILE_DIR"/. "$BUILD_DIR/xray-mobile"
+cd "$BUILD_DIR/xray-mobile"
+echo "Using vendored xray-mobile source from $XRAY_MOBILE_DIR"
 
 # Xray-core uses calendar release tags but keeps the original module path.
 go get "github.com/xtls/xray-core@$XRAY_CORE_REF"

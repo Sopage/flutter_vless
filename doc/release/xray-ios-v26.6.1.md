@@ -7,6 +7,7 @@ Changes:
 * Rebuilt `XRay.xcframework` against XTLS/Xray-core `v26.6.1`.
 * Updated the iOS SwiftPM binary target and CocoaPods default release tag to `xray-ios-v26.6.1`.
 * Kept the iOS minimum deployment target at 15.0.
+* Build source now comes from the vendored `third_party/xray-mobile` Go wrapper instead of cloning the upstream wrapper repository.
 
 Upstream:
 

@@ -1,5 +1,7 @@
 ## 1.1.3
 
+* Updated the macOS XRay core target to upstream `v26.6.22`.
+* Updated the default macOS SwiftPM/CocoaPods release tag to `xray-macos-v26.6.22`.
 * Fixed macOS Packet Tunnel VPN routing for VLESS + XHTTP + TLS configs by using the validated local TUN gateway model (`127.0.0.1` remote label, `198.18.0.1/24` local address, default gateway `198.18.0.1`).
 * Published explicit Packet Tunnel DNS with `matchDomains = [""]` and kept DNS host-route exclusions disabled for the working macOS route model.
 * Added provider/app diagnostics for raw `utun` TCP reachability, interface-bound probes, HEV fd selection, Xray/SOCKS health checks, and expanded shared provider logs.

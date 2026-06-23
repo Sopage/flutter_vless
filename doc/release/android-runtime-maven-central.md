@@ -95,7 +95,7 @@ wrong. Drop that deployment, fix the bundle, and upload a new deployment.
 1. Rebuild Android device and emulator `libxray.so` and `libtun2socks.so` into `android_runtime/xray_android/src/main/jniLibs`.
 2. Update `geoip.dat` and `geosite.dat` in `android_runtime/xray_android/src/main/assets`.
 3. Update the Maven runtime version in `packages/flutter_vless_android/android/build.gradle`.
-4. If republishing the same upstream Xray version with packaging changes, use a Maven patch version such as `26.6.1.1` because Maven Central artifacts are immutable.
+4. If republishing the same upstream Xray version with packaging changes, use a Maven patch version such as `26.6.22.1` because Maven Central artifacts are immutable.
 5. Update release notes in `doc/release/` and package changelogs.
 6. Run the local Maven build:
 
