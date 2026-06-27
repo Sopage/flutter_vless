@@ -31,6 +31,7 @@
 		842A933FBCC495A24965D7CC /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FF9BC16B0DD8D9B40B1B0FA9 /* Pods_Runner.framework */; };
 		C18459D12FC338110087A127 /* NetworkExtension.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C18459D02FC338100087A127 /* NetworkExtension.framework */; };
 		C18459D92FC338110087A127 /* XrayTunnel.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = C18459CF2FC338100087A127 /* XrayTunnel.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		C18459E02FC338110087A127 /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = C18459E12FC338110087A127 /* PacketTunnelProvider.swift */; };
 		F83E1445E231010AC3B3D83A /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E85E22307A5F42939BC87A87 /* Pods_RunnerTests.framework */; };
 		C4215F19475E737123EA3D41 /* flutter-vless-macos-tunnel-support in Frameworks */ = {isa = PBXBuildFile; productRef = F193D9F240A7B625B58A3FC5 /* flutter-vless-macos-tunnel-support */; };
 /* End PBXBuildFile section */
@@ -110,24 +111,13 @@
 		9740EEB21CF90195004384FC /* Debug.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
 		C18459CF2FC338100087A127 /* XrayTunnel.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = XrayTunnel.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		C18459D02FC338100087A127 /* NetworkExtension.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = NetworkExtension.framework; path = System/Library/Frameworks/NetworkExtension.framework; sourceTree = SDKROOT; };
+		C18459E12FC338110087A127 /* PacketTunnelProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PacketTunnelProvider.swift; sourceTree = "<group>"; };
+		C18459E22FC338110087A127 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		C18459E32FC338110087A127 /* XrayTunnel.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = XrayTunnel.entitlements; sourceTree = "<group>"; };
 		D5E274D3462F78384209BF95 /* Pods-Runner.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Runner.debug.xcconfig"; path = "Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"; sourceTree = "<group>"; };
 		E85E22307A5F42939BC87A87 /* Pods_RunnerTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_RunnerTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		FF9BC16B0DD8D9B40B1B0FA9 /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
-
-/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		C18459DA2FC338110087A127 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Info.plist,
-			);
-			target = C18459CE2FC338100087A127 /* XrayTunnel */;
-		};
-/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
-
-/* Begin PBXFileSystemSynchronizedRootGroup section */
-		C18459D22FC338110087A127 /* XrayTunnel */ = {isa = PBXFileSystemSynchronizedRootGroup; exceptions = (C18459DA2FC338110087A127 /* PBXFileSystemSynchronizedBuildFileExceptionSet */, ); explicitFileTypes = {}; explicitFolders = (); path = XrayTunnel; sourceTree = "<group>"; };
-/* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		331C80D2294CF70F00263BE5 /* Frameworks */ = {
@@ -250,6 +240,16 @@
 			path = Runner;
 			sourceTree = "<group>";
 		};
+		C18459D22FC338110087A127 /* XrayTunnel */ = {
+			isa = PBXGroup;
+			children = (
+				C18459E12FC338110087A127 /* PacketTunnelProvider.swift */,
+				C18459E22FC338110087A127 /* Info.plist */,
+				C18459E32FC338110087A127 /* XrayTunnel.entitlements */,
+			);
+			path = XrayTunnel;
+			sourceTree = "<group>";
+		};
 		D73912EC22F37F3D000D13A0 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
@@ -320,9 +320,6 @@
 			buildRules = (
 			);
 			dependencies = (
-			);
-			fileSystemSynchronizedGroups = (
-				C18459D22FC338110087A127 /* XrayTunnel */,
 			);
 			name = XrayTunnel;
 			packageProductDependencies = (
@@ -525,6 +522,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C18459E02FC338110087A127 /* PacketTunnelProvider.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
