@@ -7,7 +7,7 @@
 * Added provider/app diagnostics for raw `utun` TCP reachability, interface-bound probes, HEV fd selection, Xray/SOCKS health checks, and expanded shared provider logs.
 * Fixed macOS SwiftPM builds by explicitly importing the `CXRay` shim before using `XRayLoggerProtocol`.
 * Restored Xcode 15.x compatibility for the bundled macOS example project by replacing newer synchronized project groups with legacy Xcode project groups.
-* Hardened `prepare_apple_swiftpm.sh` for copied repository checkouts by normalizing generated SwiftPM paths, resolving Apple packages, and clearing stale DerivedData package caches.
+* Hardened `prepare_apple_swiftpm.sh` for copied repository checkouts by precreating the stable `Flutter/ephemeral/Packages/.packages/flutter_vless_macos` link before Xcode resolves packages, normalizing generated SwiftPM paths, and clearing stale DerivedData package caches.
 
 ## 1.1.2
 

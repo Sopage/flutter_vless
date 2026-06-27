@@ -6,6 +6,7 @@ EXAMPLE_DIR="${EXAMPLE_DIR:-$ROOT_DIR/example}"
 IOS_DEPLOYMENT_TARGET="${IOS_DEPLOYMENT_TARGET:-15.0}"
 MACOS_DEPLOYMENT_TARGET="${MACOS_DEPLOYMENT_TARGET:-13.0}"
 CLEAR_XCODE_DERIVED_DATA="${CLEAR_XCODE_DERIVED_DATA:-true}"
+MACOS_SWIFT_PACKAGE_DIR="$ROOT_DIR/packages/flutter_vless_macos/macos/flutter_vless_macos"
 
 if ! command -v flutter >/dev/null 2>&1; then
   echo "Error: flutter is not available in PATH" >&2
@@ -82,6 +83,31 @@ patch_flutter_vless_path() {
   fi
 }
 
+ensure_macos_plugin_package_link() {
+  local packages_dir="$EXAMPLE_DIR/macos/Flutter/ephemeral/Packages/.packages"
+  local package_link="$packages_dir/flutter_vless_macos"
+
+  if [[ ! -f "$MACOS_SWIFT_PACKAGE_DIR/Package.swift" ]]; then
+    echo "Error: macOS Swift package not found: $MACOS_SWIFT_PACKAGE_DIR" >&2
+    exit 1
+  fi
+
+  mkdir -p "$packages_dir"
+
+  if [[ -L "$package_link" || ! -e "$package_link" ]]; then
+    ln -sfn "$MACOS_SWIFT_PACKAGE_DIR" "$package_link"
+    return 0
+  fi
+
+  if [[ -f "$package_link/Package.swift" ]]; then
+    return 0
+  fi
+
+  echo "Error: $package_link exists but is not a usable flutter_vless_macos package." >&2
+  echo "Remove $packages_dir and rerun this script." >&2
+  exit 1
+}
+
 resolve_packages() {
   local project_dir="$1"
   local workspace="$2"
@@ -124,9 +150,17 @@ clear_derived_data_for_xcode_container() {
 (
   cd "$EXAMPLE_DIR"
   flutter pub get
+)
+
+ensure_macos_plugin_package_link
+
+(
+  cd "$EXAMPLE_DIR"
   flutter build macos --config-only
   flutter build ios --simulator --config-only
 )
+
+ensure_macos_plugin_package_link
 
 patch_platform \
   "$EXAMPLE_DIR/macos/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage/Package.swift" \
