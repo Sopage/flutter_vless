@@ -36,11 +36,14 @@ binaries.
 
 The app Gradle file enables extracted native executables for the Xray runtime:
 
-```xml
-<application
-    android:extractNativeLibs="true">
-    ...
-</application>
+```kotlin
+android {
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+}
 ```
 
 ## iOS

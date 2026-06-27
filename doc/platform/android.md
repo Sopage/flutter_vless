@@ -26,8 +26,8 @@ can run on Android devices and emulators with the main Android dependency.
 
 ## Native Library Packaging
 
-Use the Android Gradle plugin packaging DSL instead of setting
-`android:extractNativeLibs` directly in `AndroidManifest.xml`.
+Use the Android Gradle plugin packaging DSL for native-library extraction.
+Do not configure this directly in `AndroidManifest.xml`.
 
 Kotlin DSL:
 
