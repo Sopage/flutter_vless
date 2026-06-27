@@ -12,6 +12,12 @@ if ! command -v flutter >/dev/null 2>&1; then
   exit 127
 fi
 
+if [[ "$(basename "$ROOT_DIR")" != "flutter_vless" ]]; then
+  echo "Error: rename the top-level checkout directory to flutter_vless before running the bundled example." >&2
+  echo "Flutter SwiftPM derives local package identity from the path dependency directory name." >&2
+  exit 1
+fi
+
 patch_platform() {
   local manifest="$1"
   local platform="$2"
@@ -29,6 +35,49 @@ patch_platform() {
 
   if ! grep -q "\\.$platform(\"$version\")" "$manifest"; then
     echo "Error: failed to set .$platform(\"$version\") in $manifest" >&2
+    exit 1
+  fi
+}
+
+patch_flutter_vless_path() {
+  local manifest="$1"
+
+  if [[ ! -f "$manifest" ]]; then
+    echo "Error: generated Swift package manifest not found: $manifest" >&2
+    echo "Run this script from a checkout with the example app present." >&2
+    exit 1
+  fi
+
+  local packages_dir
+  packages_dir="$(dirname "$manifest")/../.packages"
+  if [[ ! -d "$packages_dir" ]]; then
+    echo "Error: generated Swift package links directory not found: $packages_dir" >&2
+    exit 1
+  fi
+
+  local plugin_link=""
+  if [[ -f "$packages_dir/flutter_vless_macos/Package.swift" ]]; then
+    plugin_link="flutter_vless_macos"
+  else
+    while IFS= read -r candidate; do
+      plugin_link="$(basename "$candidate")"
+      break
+    done < <(find "$packages_dir" -maxdepth 1 -name 'flutter_vless_macos*' -exec test -f '{}/Package.swift' ';' -print | sort)
+  fi
+
+  if [[ -z "$plugin_link" ]]; then
+    echo "Error: failed to find flutter_vless_macos link in $packages_dir" >&2
+    exit 1
+  fi
+
+  local plugin_path="../.packages/$plugin_link"
+
+  /usr/bin/perl -0pi -e \
+    "s#\\.package\\(name: \"flutter_vless_macos\", path: \"[^\"]*\"\\)#.package(name: \"flutter_vless_macos\", path: \"$plugin_path\")#g" \
+    "$manifest"
+
+  if ! grep -q "\\.package(name: \"flutter_vless_macos\", path: \"$plugin_path\")" "$manifest"; then
+    echo "Error: failed to set flutter_vless_macos path in $manifest" >&2
     exit 1
   fi
 }
@@ -83,6 +132,9 @@ patch_platform \
   "$EXAMPLE_DIR/macos/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage/Package.swift" \
   "macOS" \
   "$MACOS_DEPLOYMENT_TARGET"
+
+patch_flutter_vless_path \
+  "$EXAMPLE_DIR/macos/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage/Package.swift"
 
 patch_platform \
   "$EXAMPLE_DIR/ios/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage/Package.swift" \

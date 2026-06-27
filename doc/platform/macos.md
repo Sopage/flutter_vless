@@ -10,10 +10,12 @@ Tunnel target, and the Swift package products are wired correctly.
 ```bash
 cd example
 flutter pub get
+../tool/prepare_apple_swiftpm.sh
 open macos/Runner.xcworkspace
 ```
 
-Set your Apple Team on both macOS targets, then run from Xcode or:
+Open `Runner.xcworkspace`, not `Runner.xcodeproj`. Set your Apple Team on both
+macOS targets, then run from Xcode or:
 
 ```bash
 flutter run -d macos

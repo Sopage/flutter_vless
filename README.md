@@ -58,6 +58,11 @@ license notices required by the license. See [NOTICE](NOTICE) and
 The example app is the quickest way to verify platform setup before copying the
 plugin into your own project.
 
+If you downloaded a source archive, rename the top-level folder to
+`flutter_vless` before running the bundled example. The example uses local path
+dependencies, and Flutter's SwiftPM integration derives package identity from
+the checkout directory name.
+
 ```bash
 cd example
 flutter pub get
@@ -68,7 +73,9 @@ flutter run -d windows
 ```
 
 iOS needs a signed real device for VPN mode, macOS needs the Packet Tunnel
-setup, and Windows needs `example/windows/xray/xray.exe`.
+setup, and Windows needs `example/windows/xray/xray.exe`. For iOS or macOS
+SwiftPM setup issues, run `../tool/prepare_apple_swiftpm.sh` from `example/`
+and reopen the Xcode workspace.
 
 ## Installation
 

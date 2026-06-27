@@ -219,7 +219,7 @@ void _patchGeneratedPluginSwiftPackage(
   final updated = source
       .replaceAll(
         RegExp(
-          r'\.package\(name:\s*"flutter_vless_macos",\s*path:\s*"\.\./\.packages/flutter_vless_macos[^"]*"\)',
+          r'\.package\(name:\s*"flutter_vless_macos",\s*path:\s*"[^"]*"\)',
         ),
         '.package(name: "flutter_vless_macos", path: "$generatedRelativePath")',
       )

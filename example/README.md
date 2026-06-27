@@ -4,6 +4,11 @@ The example app is the fastest way to verify that platform setup, native Xray
 integration, proxy-only mode, tunnel mode, import parsing, and status updates
 work before copying the plugin into your own app.
 
+If you downloaded a source archive, rename the top-level folder to
+`flutter_vless` before running the bundled example. The example depends on the
+parent package with `path: ../`, and Flutter's SwiftPM integration expects that
+path dependency to keep the `flutter_vless` package identity.
+
 ## What It Demonstrates
 
 - Clipboard import through `FlutterVless.parse()`
@@ -36,7 +41,7 @@ The app Gradle file enables extracted native executables for the Xray runtime:
     android:extractNativeLibs="true">
     ...
 </application>
-
+```
 
 ## iOS
 

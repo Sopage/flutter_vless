@@ -7,9 +7,21 @@ This guide is for developers who want to add `flutter_vless` to an app and get a
 The fastest way to verify your environment is to run the bundled example app
 first, then copy the same setup shape into your project.
 
+If you downloaded a source archive, rename the top-level folder to
+`flutter_vless` before running the bundled example. The example uses
+`flutter_vless: path: ../`, and Flutter's SwiftPM integration derives package
+identity from that local path.
+
 ```bash
 cd example
 flutter pub get
+```
+
+For iOS or macOS, prepare the generated SwiftPM package metadata before opening
+Xcode if package resolution looks stale:
+
+```bash
+../tool/prepare_apple_swiftpm.sh
 ```
 
 Then run the target you care about:
@@ -28,7 +40,7 @@ macOS needs the Packet Tunnel setup, and Windows needs `xray.exe` in place.
 
 ```yaml
 dependencies:
-  flutter_vless: ^1.1.1
+  flutter_vless: ^1.1.3
 ```
 
 Then run:
