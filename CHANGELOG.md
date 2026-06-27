@@ -8,6 +8,8 @@
 * Added subscription import coverage and documentation for WireGuard, Hysteria2 / `hy2`, HTTPUpgrade, and modern raw transport mappings.
 * Fixed macOS SwiftPM builds by updating the macOS package dependency to the release that explicitly imports the `CXRay` shim.
 * Fixed repeated macOS Packet Tunnel setup so existing Xcode and generated SwiftPM package references update their paths to versioned hosted package symlinks.
+* Restored Xcode 15.x compatibility for the bundled iOS and macOS example projects by replacing newer synchronized project groups with legacy Xcode project groups.
+* Hardened the macOS example SwiftPM preparation flow for copied repository checkouts by normalizing generated package paths, resolving Apple packages, and clearing stale DerivedData package caches.
 
 ## 1.1.2
 
