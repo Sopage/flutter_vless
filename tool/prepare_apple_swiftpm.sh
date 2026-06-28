@@ -49,29 +49,12 @@ patch_flutter_vless_path() {
     exit 1
   fi
 
-  local packages_dir
-  packages_dir="$(dirname "$manifest")/../.packages"
-  if [[ ! -d "$packages_dir" ]]; then
-    echo "Error: generated Swift package links directory not found: $packages_dir" >&2
+  if [[ ! -f "$MACOS_SWIFT_PACKAGE_DIR/Package.swift" ]]; then
+    echo "Error: macOS Swift package not found: $MACOS_SWIFT_PACKAGE_DIR" >&2
     exit 1
   fi
 
-  local plugin_link=""
-  if [[ -f "$packages_dir/flutter_vless_macos/Package.swift" ]]; then
-    plugin_link="flutter_vless_macos"
-  else
-    while IFS= read -r candidate; do
-      plugin_link="$(basename "$candidate")"
-      break
-    done < <(find "$packages_dir" -maxdepth 1 -name 'flutter_vless_macos*' -exec test -f '{}/Package.swift' ';' -print | sort)
-  fi
-
-  if [[ -z "$plugin_link" ]]; then
-    echo "Error: failed to find flutter_vless_macos link in $packages_dir" >&2
-    exit 1
-  fi
-
-  local plugin_path="../.packages/$plugin_link"
+  local plugin_path="../../../../../../packages/flutter_vless_macos/macos/flutter_vless_macos"
 
   /usr/bin/perl -0pi -e \
     "s#\\.package\\(name: \"flutter_vless_macos\", path: \"[^\"]*\"\\)#.package(name: \"flutter_vless_macos\", path: \"$plugin_path\")#g" \
