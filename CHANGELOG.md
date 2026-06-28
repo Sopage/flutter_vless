@@ -11,6 +11,9 @@
 * Restored Xcode 15.x compatibility for the bundled iOS and macOS example projects by replacing newer synchronized project groups with legacy Xcode project groups.
 * Hardened the macOS example SwiftPM preparation flow for copied repository checkouts by resolving the local macOS Swift package through the repository path instead of depending on the generated `Flutter/ephemeral/Packages/.packages/flutter_vless_macos` link, normalizing generated package paths, and clearing stale DerivedData package caches.
 * Hardened `setup_macos_vpn` so newly configured apps resolve the real macOS Swift package directory from `package_config.json` and repair stale generated `.packages/flutter_vless_macos` references.
+* Removed generated example SwiftPM `Package.resolved` files so older Xcode versions regenerate a compatible pins file instead of failing on newer `PinsStorage` formats.
+* Fixed macOS CocoaPods fallback builds by exporting the `CXRay` Clang shim module to both the plugin pod target and the host app target.
+* Added `setup_macos_vpn --prepare-only` for macOS apps that need only generated SwiftPM metadata and deployment-target repair before building proxy-only mode.
 
 ## 1.1.2
 

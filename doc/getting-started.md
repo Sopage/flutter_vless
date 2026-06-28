@@ -29,12 +29,13 @@ Then run the target you care about:
 ```bash
 flutter run -d android
 flutter run -d ios
-flutter run -d macos
 flutter run -d windows
 ```
 
 Platform caveats still apply: iOS needs a real signed device for VPN mode,
-macOS needs the Packet Tunnel setup, and Windows needs `xray.exe` in place.
+macOS needs the Packet Tunnel setup and a valid Apple Team on both macOS
+targets, and Windows needs `xray.exe` in place. For macOS, run
+`flutter run -d macos` after the workspace signing is valid.
 
 ## 1. Add The Dependency
 
@@ -48,6 +49,14 @@ Then run:
 ```bash
 flutter pub get
 ```
+
+For macOS, run the metadata preparation step before the first build:
+
+```bash
+dart run flutter_vless:setup_macos_vpn --prepare-only
+```
+
+Use the full macOS setup command instead when you need Packet Tunnel VPN mode.
 
 Android emulator support is included through the main Android runtime AAR.
 

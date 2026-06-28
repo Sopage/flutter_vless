@@ -28,9 +28,23 @@ flutter run -d macos
 - App Groups enabled
 - the setup command from the package
 
+## Proxy-Only Setup
+
+If you only need proxy-only mode in your own app, run this once from the Flutter
+app root after `flutter pub get`:
+
+```bash
+dart run flutter_vless:setup_macos_vpn --prepare-only
+```
+
+This updates Flutter's generated macOS SwiftPM metadata and the Runner
+deployment target to macOS 13.0. It does not add a Packet Tunnel target,
+entitlements, signing settings, or App Groups.
+
 ## Recommended Setup Command
 
-For your own app, run the setup command from your Flutter app root:
+For Packet Tunnel VPN mode in your own app, run the full setup command from
+your Flutter app root:
 
 ```bash
 dart run flutter_vless:setup_macos_vpn \

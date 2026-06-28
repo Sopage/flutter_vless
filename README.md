@@ -66,16 +66,25 @@ directory name.
 ```bash
 cd example
 flutter pub get
+../tool/prepare_apple_swiftpm.sh
 flutter run -d android
 flutter run -d ios
-flutter run -d macos
 flutter run -d windows
 ```
 
-iOS needs a signed real device for VPN mode, macOS needs the Packet Tunnel
-setup, and Windows needs `example/windows/xray/xray.exe`. For iOS or macOS
-SwiftPM setup issues, run `../tool/prepare_apple_swiftpm.sh` from `example/`
-and reopen the Xcode workspace.
+iOS needs a signed real device for VPN mode, macOS needs the generated SwiftPM
+metadata prepared for macOS 13.0 plus a valid Apple Team on `Runner` and
+`XrayTunnel`, and Windows needs `example/windows/xray/xray.exe`.
+
+For macOS, open `example/macos/Runner.xcworkspace`, select your Apple Team on
+both macOS targets if signing is not already valid, then run:
+
+```bash
+flutter run -d macos
+```
+
+If Xcode is already open after running the prepare script, close it and reopen
+the workspace.
 
 ## Installation
 
@@ -89,6 +98,15 @@ Then run:
 ```bash
 flutter pub get
 ```
+
+For a macOS app, prepare the generated Flutter SwiftPM metadata before the first
+build. Proxy-only apps can run only the metadata step:
+
+```bash
+dart run flutter_vless:setup_macos_vpn --prepare-only
+```
+
+VPN mode apps should run the full macOS setup from the platform guide.
 
 Android emulator binaries are included in the main Android Maven runtime AAR.
 

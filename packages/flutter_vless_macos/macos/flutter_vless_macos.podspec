@@ -10,6 +10,9 @@ macOS implementation of the flutter_vless plugin.
   s.author           = { '13FOX Studio' => '13fox.comp@gmail.com' }
 
   s.source = { :path => '..' }
+  cxray_pod_include_dir = '${PODS_TARGET_SRCROOT}/flutter_vless_macos/Sources/CXRay/include'
+  cxray_user_include_dir = '${PODS_ROOT}/../Flutter/ephemeral/.symlinks/plugins/flutter_vless_macos/macos/flutter_vless_macos/Sources/CXRay/include'
+
   s.source_files = 'flutter_vless_macos/Sources/flutter_vless_macos/**/*.swift'
   s.dependency 'FlutterMacOS'
   s.platform = :osx, '13.0'
@@ -47,7 +50,15 @@ macOS implementation of the flutter_vless plugin.
     fi
   CMD
 
-  s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES' }
+  s.pod_target_xcconfig = {
+    'DEFINES_MODULE' => 'YES',
+    'HEADER_SEARCH_PATHS' => '$(inherited) "' + cxray_pod_include_dir + '"',
+    'OTHER_SWIFT_FLAGS' => '$(inherited) -Xcc -fmodule-map-file="' + cxray_pod_include_dir + '/module.modulemap"',
+  }
+  s.user_target_xcconfig = {
+    'HEADER_SEARCH_PATHS' => '$(inherited) "' + cxray_user_include_dir + '"',
+    'OTHER_SWIFT_FLAGS' => '$(inherited) -Xcc -fmodule-map-file="' + cxray_user_include_dir + '/module.modulemap"',
+  }
   s.swift_version = '5.0'
   s.libraries = 'resolv'
   s.vendored_frameworks = 'XRay.xcframework'

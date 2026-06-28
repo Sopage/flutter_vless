@@ -74,6 +74,39 @@ Check:
 - for macOS `1.1.3`, keep explicit Packet Tunnel DNS enabled and DNS host-route
   exclusions disabled unless a real smoke test proves another route model
 
+## macOS Build Fails During Xcode Or SwiftPM Resolution
+
+For the bundled example, run from the repository example directory:
+
+```bash
+cd flutter_vless/example
+flutter clean
+rm -rf macos/Flutter/ephemeral macos/Pods macos/Podfile.lock
+flutter pub get
+../tool/prepare_apple_swiftpm.sh
+flutter run -d macos
+```
+
+If Xcode reports `unknown 'PinsStorage' version '3'`, delete the generated
+`macos/Runner.xcworkspace/xcshareddata/swiftpm/Package.resolved` file and rerun
+the prepare script. The repository does not require this generated file.
+
+If a new app reports that `flutter-vless-macos` requires macOS 13.0 while the
+generated target supports 10.15, run:
+
+```bash
+dart run flutter_vless:setup_macos_vpn --prepare-only
+```
+
+If CocoaPods fallback reports `no such module 'CXRay'`, clean `macos/Pods`,
+`macos/Podfile.lock`, and `macos/Flutter/ephemeral`, then run `flutter pub get`
+again so CocoaPods regenerates the pod settings.
+
+If Xcode prints `DVTPortal` or `Your session has expired`, that is an Apple
+account/signing issue rather than a SwiftPM package issue. Open Xcode Settings,
+sign in again, then select your Apple Team for both `Runner` and `XrayTunnel`
+in `example/macos/Runner.xcworkspace`.
+
 ## Windows Specific
 
 - confirm `xray.exe` is available where the plugin expects it

@@ -57,13 +57,24 @@ patch_flutter_vless_path() {
   local plugin_path="../../../../../../packages/flutter_vless_macos/macos/flutter_vless_macos"
 
   /usr/bin/perl -0pi -e \
-    "s#\\.package\\(name: \"flutter_vless_macos\", path: \"[^\"]*\"\\)#.package(name: \"flutter_vless_macos\", path: \"$plugin_path\")#g" \
+    "s#\\.package\\((?=[^)]*(?:name:\\s*\"flutter_vless_macos\"|path:\\s*\"[^\"]*flutter_vless_macos[^\"]*\"))[^)]*\\)#.package(name: \"flutter_vless_macos\", path: \"$plugin_path\")#g" \
     "$manifest"
 
   if ! grep -q "\\.package(name: \"flutter_vless_macos\", path: \"$plugin_path\")" "$manifest"; then
+    if ! grep -q "flutter_vless_macos" "$manifest"; then
+      echo "Skipping flutter_vless_macos SwiftPM path patch; Flutter SwiftPM plugin integration is not present in $manifest." >&2
+      return 0
+    fi
     echo "Error: failed to set flutter_vless_macos path in $manifest" >&2
     exit 1
   fi
+}
+
+clear_swiftpm_resolved_files() {
+  find "$EXAMPLE_DIR/ios" "$EXAMPLE_DIR/macos" \
+    -path '*/xcshareddata/swiftpm/Package.resolved' \
+    -type f \
+    -delete
 }
 
 patch_flutter_vless_path_if_present() {
@@ -141,6 +152,7 @@ clear_derived_data_for_xcode_container() {
   flutter pub get
 )
 
+clear_swiftpm_resolved_files
 ensure_macos_plugin_package_link
 patch_flutter_vless_path_if_present \
   "$EXAMPLE_DIR/macos/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage/Package.swift"

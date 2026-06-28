@@ -45,19 +45,28 @@ void main(List<String> args) async {
         'Could not find ${pbxprojFile.path}. Run this from a Flutter app root '
         'or pass --project-dir.');
   }
-  if (options.bundleId == null || options.groupId == null) {
+  if (!options.prepareOnly &&
+      (options.bundleId == null || options.groupId == null)) {
     _fail('Both --bundle-id and --group-id are required.');
   }
 
-  final pluginPackagePaths = await _resolveFlutterSwiftPackagePaths(
+  final pluginPackagePaths = await _prepareMacOSSwiftPMMetadata(
     appRoot: appRoot,
     macosDir: macosDir,
+    deploymentTarget: options.deploymentTarget,
   );
-  _patchGeneratedPluginSwiftPackage(
-    macosDir,
-    pluginPackagePaths.generatedPackageRelativePath,
-    options.deploymentTarget,
-  );
+  if (options.prepareOnly) {
+    final project = _PbxProject(pbxprojFile.readAsStringSync());
+    project.prepareSwiftPM(deploymentTarget: options.deploymentTarget);
+    pbxprojFile.writeAsStringSync(project.text);
+
+    stdout.writeln('macOS SwiftPM metadata prepared.');
+    stdout.writeln('Deployment target: ${options.deploymentTarget}');
+    stdout.writeln(
+        'Plugin package path: ${pluginPackagePaths.xcodeProjectRelativePath}');
+    return;
+  }
+
   _writeTunnelFiles(macosDir, options.groupId!);
 
   final project = _PbxProject(pbxprojFile.readAsStringSync());
@@ -90,6 +99,7 @@ Options:
   --project-dir <path>          Flutter app root. Defaults to current directory.
   --deployment-target <value>   Defaults to 13.0.
   --team-id <id>                Optional, but recommended for automatic signing.
+  --prepare-only                Only repair generated macOS SwiftPM metadata.
 ''');
 }
 
@@ -122,6 +132,60 @@ Future<_FlutterSwiftPackagePaths> _resolveFlutterSwiftPackagePaths({
       toDirectory: swiftPackageDir,
     ),
   );
+}
+
+Future<_FlutterSwiftPackagePaths> _prepareMacOSSwiftPMMetadata({
+  required Directory appRoot,
+  required Directory macosDir,
+  required String deploymentTarget,
+}) async {
+  _clearSwiftPMResolvedFiles(macosDir);
+  var pluginPackagePaths = await _resolveFlutterSwiftPackagePaths(
+    appRoot: appRoot,
+    macosDir: macosDir,
+  );
+
+  await _runFlutterMacOSConfigOnly(appRoot);
+
+  pluginPackagePaths = await _resolveFlutterSwiftPackagePaths(
+    appRoot: appRoot,
+    macosDir: macosDir,
+  );
+  _patchGeneratedPluginSwiftPackage(
+    macosDir,
+    pluginPackagePaths.generatedPackageRelativePath,
+    deploymentTarget,
+  );
+  _clearSwiftPMResolvedFiles(macosDir);
+  return pluginPackagePaths;
+}
+
+Future<void> _runFlutterMacOSConfigOnly(Directory appRoot) async {
+  stdout.writeln('Generating Flutter macOS SwiftPM metadata...');
+  final result = await Process.run(
+    'flutter',
+    ['build', 'macos', '--config-only'],
+    workingDirectory: appRoot.path,
+  );
+  stdout.write(result.stdout);
+  stderr.write(result.stderr);
+  if (result.exitCode != 0) {
+    _fail('flutter build macos --config-only failed.');
+  }
+}
+
+void _clearSwiftPMResolvedFiles(Directory macosDir) {
+  if (!macosDir.existsSync()) return;
+
+  for (final entity in macosDir.listSync(recursive: true, followLinks: false)) {
+    if (entity is! File || _basename(entity.path) != 'Package.resolved') {
+      continue;
+    }
+    final normalized = entity.path.replaceAll('\\', '/');
+    if (normalized.contains('/xcshareddata/swiftpm/')) {
+      entity.deleteSync();
+    }
+  }
 }
 
 Future<Directory> _resolveFlutterSwiftPackageDir(Directory appRoot) async {
@@ -276,7 +340,7 @@ void _patchGeneratedPluginSwiftPackage(
   final updated = source
       .replaceAll(
         RegExp(
-          r'\.package\(name:\s*"flutter_vless_macos",\s*path:\s*"[^"]*"\)',
+          r'\.package\((?=[^)]*(?:name:\s*"flutter_vless_macos"|path:\s*"[^"]*flutter_vless_macos[^"]*"))[^)]*\)',
         ),
         '.package(name: "flutter_vless_macos", path: "$generatedRelativePath")',
       )
@@ -491,6 +555,11 @@ class _PbxProject {
 
   String text;
   final _random = Random.secure();
+
+  /// Applies project-level settings needed by the macOS SwiftPM plugin package.
+  void prepareSwiftPM({required String deploymentTarget}) {
+    _patchAllMacOSDeploymentTargets(deploymentTarget);
+  }
 
   /// Applies all Xcode project changes required for macOS Packet Tunnel mode.
   ///
@@ -1370,6 +1439,7 @@ class _Options {
     required this.bundleId,
     required this.groupId,
     required this.teamId,
+    required this.prepareOnly,
     required this.help,
   });
 
@@ -1378,15 +1448,21 @@ class _Options {
   final String? bundleId;
   final String? groupId;
   final String? teamId;
+  final bool prepareOnly;
   final bool help;
 
   static _Options parse(List<String> args) {
     final values = <String, String>{};
+    final flags = <String>{};
     var help = false;
     for (var i = 0; i < args.length; i++) {
       final arg = args[i];
       if (arg == '--help' || arg == '-h') {
         help = true;
+        continue;
+      }
+      if (arg == '--prepare-only') {
+        flags.add('prepare-only');
         continue;
       }
       if (!arg.startsWith('--')) {
@@ -1409,6 +1485,7 @@ class _Options {
       bundleId: values['bundle-id'],
       groupId: values['group-id'],
       teamId: values['team-id'],
+      prepareOnly: flags.contains('prepare-only'),
       help: help,
     );
   }
