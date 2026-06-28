@@ -8,6 +8,7 @@
 * Fixed macOS SwiftPM builds by explicitly importing the `CXRay` shim before using `XRayLoggerProtocol`.
 * Restored Xcode 15.x compatibility for the bundled macOS example project by replacing newer synchronized project groups with legacy Xcode project groups.
 * Hardened `prepare_apple_swiftpm.sh` for copied repository checkouts by resolving the local macOS Swift package through the repository path instead of depending on the generated `Flutter/ephemeral/Packages/.packages/flutter_vless_macos` link, normalizing generated SwiftPM paths, and clearing stale DerivedData package caches.
+* Hardened `setup_macos_vpn` so newly configured apps resolve the real macOS Swift package directory from `package_config.json` and repair stale generated `.packages/flutter_vless_macos` references.
 
 ## 1.1.2
 

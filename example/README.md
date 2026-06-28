@@ -5,9 +5,9 @@ integration, proxy-only mode, tunnel mode, import parsing, and status updates
 work before copying the plugin into your own app.
 
 If you downloaded a source archive, rename the top-level folder to
-`flutter_vless` before running the bundled example. The example depends on the
-parent package with `path: ../`, and Flutter's SwiftPM integration expects that
-path dependency to keep the `flutter_vless` package identity.
+`flutter_vless` before running the bundled example. Flutter's SwiftPM
+integration derives the root plugin package identity from the path dependency
+directory name.
 
 ## What It Demonstrates
 

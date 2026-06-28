@@ -26,6 +26,8 @@ const tunnelProductName = 'flutter-vless-macos-tunnel-support';
 const tunnelModuleName = 'flutter_vless_macos_tunnel_support';
 const pluginPackageName = 'flutter_vless_macos';
 const pluginPackagesRelativeDir = 'Flutter/ephemeral/Packages/.packages';
+const generatedPluginSwiftPackageRelativeDir =
+    'Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage';
 
 void main(List<String> args) async {
   final options = _Options.parse(args);
@@ -47,10 +49,13 @@ void main(List<String> args) async {
     _fail('Both --bundle-id and --group-id are required.');
   }
 
-  final pluginPackageRelativePath = await _ensureFlutterPackageLink(appRoot);
+  final pluginPackagePaths = await _resolveFlutterSwiftPackagePaths(
+    appRoot: appRoot,
+    macosDir: macosDir,
+  );
   _patchGeneratedPluginSwiftPackage(
     macosDir,
-    pluginPackageRelativePath,
+    pluginPackagePaths.generatedPackageRelativePath,
     options.deploymentTarget,
   );
   _writeTunnelFiles(macosDir, options.groupId!);
@@ -61,7 +66,7 @@ void main(List<String> args) async {
     groupId: options.groupId!,
     teamId: options.teamId,
     deploymentTarget: options.deploymentTarget,
-    pluginPackageRelativePath: pluginPackageRelativePath,
+    pluginPackageRelativePath: pluginPackagePaths.xcodeProjectRelativePath,
   );
   pbxprojFile.writeAsStringSync(project.text);
 
@@ -88,9 +93,40 @@ Options:
 ''');
 }
 
-Future<String> _ensureFlutterPackageLink(Directory appRoot) async {
-  final existing = _findFlutterPackageLink(appRoot);
-  if (existing != null) return existing;
+class _FlutterSwiftPackagePaths {
+  const _FlutterSwiftPackagePaths({
+    required this.xcodeProjectRelativePath,
+    required this.generatedPackageRelativePath,
+  });
+
+  final String xcodeProjectRelativePath;
+  final String generatedPackageRelativePath;
+}
+
+Future<_FlutterSwiftPackagePaths> _resolveFlutterSwiftPackagePaths({
+  required Directory appRoot,
+  required Directory macosDir,
+}) async {
+  final swiftPackageDir = await _resolveFlutterSwiftPackageDir(appRoot);
+  _ensureGeneratedPackageLink(appRoot, swiftPackageDir);
+
+  final generatedPackageDir =
+      Directory('${macosDir.path}/$generatedPluginSwiftPackageRelativeDir');
+  return _FlutterSwiftPackagePaths(
+    xcodeProjectRelativePath: _relativePosixPath(
+      fromDirectory: macosDir,
+      toDirectory: swiftPackageDir,
+    ),
+    generatedPackageRelativePath: _relativePosixPath(
+      fromDirectory: generatedPackageDir,
+      toDirectory: swiftPackageDir,
+    ),
+  );
+}
+
+Future<Directory> _resolveFlutterSwiftPackageDir(Directory appRoot) async {
+  final existingPackageConfig = _swiftPackageDirFromPackageConfig(appRoot);
+  if (existingPackageConfig != null) return existingPackageConfig;
 
   stdout.writeln(
       'Flutter generated packages are missing; running flutter pub get...');
@@ -105,20 +141,20 @@ Future<String> _ensureFlutterPackageLink(Directory appRoot) async {
     _fail('flutter pub get failed.');
   }
 
-  final generated = _findFlutterPackageLink(appRoot);
+  final packageConfig = _swiftPackageDirFromPackageConfig(appRoot);
+  if (packageConfig != null) return packageConfig;
+
+  final generated = _findFlutterSwiftPackageDir(appRoot);
   if (generated != null) return generated;
 
-  final restored = _restoreFlutterPackageLinkFromPackageConfig(appRoot);
-  if (restored != null) return restored;
-
   _fail(
-    'Could not find Flutter Swift package link for $pluginPackageName. '
-    'Expected a Package.swift under macos/$pluginPackagesRelativeDir/$pluginPackageName*. '
+    'Could not find Swift package directory for $pluginPackageName. '
+    'Expected Package.swift in Flutter generated packages or package_config.json. '
     'Run flutter clean, flutter pub get, and retry.',
   );
 }
 
-String? _findFlutterPackageLink(Directory appRoot) {
+Directory? _findFlutterSwiftPackageDir(Directory appRoot) {
   final packagesDir =
       Directory('${appRoot.path}/macos/$pluginPackagesRelativeDir');
   if (!packagesDir.existsSync()) return null;
@@ -130,21 +166,23 @@ String? _findFlutterPackageLink(Directory appRoot) {
         return _isFlutterVlessMacOSPackageName(name) &&
             File('${entry.path}/Package.swift').existsSync();
       })
-      .map((entry) => _basename(entry.path))
+      .map((entry) => Directory(entry.path))
       .toList()
-    ..sort();
+    ..sort((a, b) => _basename(a.path).compareTo(_basename(b.path)));
 
-  if (entries.contains(pluginPackageName)) {
-    return '$pluginPackagesRelativeDir/$pluginPackageName';
+  for (final entry in entries) {
+    if (_basename(entry.path) == pluginPackageName) {
+      return entry;
+    }
   }
   if (entries.isNotEmpty) {
-    return '$pluginPackagesRelativeDir/${entries.last}';
+    return entries.last;
   }
 
   return null;
 }
 
-String? _restoreFlutterPackageLinkFromPackageConfig(Directory appRoot) {
+Directory? _swiftPackageDirFromPackageConfig(Directory appRoot) {
   final packageConfigFile =
       File('${appRoot.path}/.dart_tool/package_config.json');
   if (!packageConfigFile.existsSync()) return null;
@@ -178,19 +216,39 @@ String? _restoreFlutterPackageLinkFromPackageConfig(Directory appRoot) {
       return null;
     }
 
-    final packagesDir =
-        Directory('${appRoot.path}/macos/$pluginPackagesRelativeDir')
-          ..createSync(recursive: true);
-    final link = Link('${packagesDir.path}/$pluginPackageName');
-    if (link.existsSync()) {
-      link.updateSync(swiftPackageDir.path);
-    } else if (!Directory(link.path).existsSync()) {
-      link.createSync(swiftPackageDir.path, recursive: true);
-    }
-    return '$pluginPackagesRelativeDir/$pluginPackageName';
+    return swiftPackageDir;
   }
 
   return null;
+}
+
+void _ensureGeneratedPackageLink(
+  Directory appRoot,
+  Directory swiftPackageDir,
+) {
+  final packagesDir =
+      Directory('${appRoot.path}/macos/$pluginPackagesRelativeDir')
+        ..createSync(recursive: true);
+  final link = Link('${packagesDir.path}/$pluginPackageName');
+
+  switch (FileSystemEntity.typeSync(link.path, followLinks: false)) {
+    case FileSystemEntityType.notFound:
+      break;
+    case FileSystemEntityType.link:
+      link.deleteSync();
+      break;
+    case FileSystemEntityType.directory:
+      Directory(link.path).deleteSync(recursive: true);
+      break;
+    case FileSystemEntityType.file:
+      File(link.path).deleteSync();
+      break;
+    case FileSystemEntityType.pipe:
+    case FileSystemEntityType.unixDomainSock:
+      _fail('Cannot replace unsupported file system entry: ${link.path}');
+  }
+
+  link.createSync(swiftPackageDir.path, recursive: true);
 }
 
 Directory? _packageRootFromConfigUri(File packageConfigFile, String rootUri) {
@@ -213,8 +271,7 @@ void _patchGeneratedPluginSwiftPackage(
   );
   if (!packageFile.existsSync()) return;
 
-  final packageLinkName = _basename(pluginPackageRelativePath);
-  final generatedRelativePath = '../.packages/$packageLinkName';
+  final generatedRelativePath = _swiftStringLiteral(pluginPackageRelativePath);
   final source = packageFile.readAsStringSync();
   final updated = source
       .replaceAll(
@@ -230,6 +287,47 @@ void _patchGeneratedPluginSwiftPackage(
   if (updated != source) {
     packageFile.writeAsStringSync(updated);
   }
+}
+
+String _relativePosixPath({
+  required Directory fromDirectory,
+  required Directory toDirectory,
+}) {
+  final from = _splitAbsolutePath(fromDirectory.absolute.path);
+  final to = _splitAbsolutePath(toDirectory.absolute.path);
+
+  var common = 0;
+  while (common < from.length &&
+      common < to.length &&
+      from[common] == to[common]) {
+    common += 1;
+  }
+
+  final parts = [
+    for (var i = common; i < from.length; i++) '..',
+    ...to.skip(common),
+  ];
+  return parts.isEmpty ? '.' : parts.join('/');
+}
+
+List<String> _splitAbsolutePath(String path) {
+  return path
+      .replaceAll('\\', '/')
+      .split('/')
+      .where((part) => part.isNotEmpty && part != '.')
+      .toList();
+}
+
+String _swiftStringLiteral(String value) {
+  return value.replaceAll(r'\', r'\\').replaceAll('"', r'\"');
+}
+
+String _pbxStringLiteral(String value) {
+  final escaped = value.replaceAll(r'\', r'\\').replaceAll('"', r'\"');
+  if (RegExp(r'^[A-Za-z0-9_./$-]+$').hasMatch(value)) {
+    return escaped;
+  }
+  return '"$escaped"';
 }
 
 bool _isFlutterVlessMacOSPackageName(String name) {
@@ -608,7 +706,7 @@ class _PbxProject {
       '''
 \t\t$id /* XCLocalSwiftPackageReference "$pluginPackageRelativePath" */ = {
 \t\t\tisa = XCLocalSwiftPackageReference;
-\t\t\trelativePath = $pluginPackageRelativePath;
+\t\t\trelativePath = ${_pbxStringLiteral(pluginPackageRelativePath)};
 \t\t};
 ''',
     );
@@ -622,7 +720,7 @@ class _PbxProject {
     final block = _objectBlock(id);
     final updatedBlock = block.text.replaceFirst(
       RegExp(r'relativePath = [^;]+;'),
-      'relativePath = $pluginPackageRelativePath;',
+      'relativePath = ${_pbxStringLiteral(pluginPackageRelativePath)};',
     );
     text = text.replaceRange(block.start, block.end, updatedBlock);
     _patchLocalPackageReferenceComments(id, pluginPackageRelativePath);

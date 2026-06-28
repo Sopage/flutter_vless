@@ -8,9 +8,9 @@ The fastest way to verify your environment is to run the bundled example app
 first, then copy the same setup shape into your project.
 
 If you downloaded a source archive, rename the top-level folder to
-`flutter_vless` before running the bundled example. The example uses
-`flutter_vless: path: ../`, and Flutter's SwiftPM integration derives package
-identity from that local path.
+`flutter_vless` before running the bundled example. Flutter's SwiftPM
+integration derives the root plugin package identity from the path dependency
+directory name.
 
 ```bash
 cd example

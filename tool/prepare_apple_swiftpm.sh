@@ -15,7 +15,7 @@ fi
 
 if [[ "$(basename "$ROOT_DIR")" != "flutter_vless" ]]; then
   echo "Error: rename the top-level checkout directory to flutter_vless before running the bundled example." >&2
-  echo "Flutter SwiftPM derives local package identity from the path dependency directory name." >&2
+  echo "Flutter SwiftPM derives the root plugin package identity from the path dependency directory name." >&2
   exit 1
 fi
 
@@ -66,6 +66,14 @@ patch_flutter_vless_path() {
   fi
 }
 
+patch_flutter_vless_path_if_present() {
+  local manifest="$1"
+
+  if [[ -f "$manifest" ]]; then
+    patch_flutter_vless_path "$manifest"
+  fi
+}
+
 ensure_macos_plugin_package_link() {
   local packages_dir="$EXAMPLE_DIR/macos/Flutter/ephemeral/Packages/.packages"
   local package_link="$packages_dir/flutter_vless_macos"
@@ -77,18 +85,16 @@ ensure_macos_plugin_package_link() {
 
   mkdir -p "$packages_dir"
 
-  if [[ -L "$package_link" || ! -e "$package_link" ]]; then
-    ln -sfn "$MACOS_SWIFT_PACKAGE_DIR" "$package_link"
-    return 0
+  if [[ -e "$package_link" || -L "$package_link" ]]; then
+    rm -rf "$package_link"
   fi
 
-  if [[ -f "$package_link/Package.swift" ]]; then
-    return 0
-  fi
+  ln -s "$MACOS_SWIFT_PACKAGE_DIR" "$package_link"
 
-  echo "Error: $package_link exists but is not a usable flutter_vless_macos package." >&2
-  echo "Remove $packages_dir and rerun this script." >&2
-  exit 1
+  if [[ ! -f "$package_link/Package.swift" ]]; then
+    echo "Error: failed to create usable flutter_vless_macos link: $package_link" >&2
+    exit 1
+  fi
 }
 
 resolve_packages() {
@@ -136,6 +142,8 @@ clear_derived_data_for_xcode_container() {
 )
 
 ensure_macos_plugin_package_link
+patch_flutter_vless_path_if_present \
+  "$EXAMPLE_DIR/macos/Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage/Package.swift"
 
 (
   cd "$EXAMPLE_DIR"

@@ -59,9 +59,9 @@ The example app is the quickest way to verify platform setup before copying the
 plugin into your own project.
 
 If you downloaded a source archive, rename the top-level folder to
-`flutter_vless` before running the bundled example. The example uses local path
-dependencies, and Flutter's SwiftPM integration derives package identity from
-the checkout directory name.
+`flutter_vless` before running the bundled example. Flutter's SwiftPM
+integration derives the root plugin package identity from the path dependency
+directory name.
 
 ```bash
 cd example
