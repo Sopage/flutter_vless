@@ -76,7 +76,11 @@ ios/XRay.xcframework.zip
 **/*.zip
 
 # screenshots / big media
-screenshots/
+screenshots/*
+!screenshots/IMG_4652.PNG
+!screenshots/2026-05-25 в 01.03.20.png
+!screenshots/Screenshot_1762288388.png
+!screenshots/Screenshot_1762286345.png
 assets/images/big-*
 chrome_stdout.log
 tool/native_host/

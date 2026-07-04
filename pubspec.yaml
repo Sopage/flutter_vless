@@ -9,6 +9,16 @@ documentation: https://github.com/XIIIFOX/flutter_vless/blob/main/doc/README.md
 funding:
   - https://tfox.dev
 
+screenshots:
+  - description: iOS example showing an active VPN connection.
+    path: screenshots/IMG_4652.PNG
+  - description: macOS example showing an active VPN connection.
+    path: screenshots/2026-05-25 в 01.03.20.png
+  - description: Android example showing an active VPN connection.
+    path: screenshots/Screenshot_1762288388.png
+  - description: Android example showing blocked domains and apps routing.
+    path: screenshots/Screenshot_1762286345.png
+
 topics:
   - vpn
   - vless
