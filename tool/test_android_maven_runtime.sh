@@ -2,7 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-XRAY_RUNTIME_VERSION="${XRAY_RUNTIME_VERSION:-26.6.27}"
+XRAY_RUNTIME_VERSION="${XRAY_RUNTIME_VERSION:-26.6.27.1}"
+XRAY_CORE_VERSION="${XRAY_CORE_VERSION:-26.6.27}"
 MAVEN_BASE_URL="https://repo1.maven.org/maven2/dev/tfox/fluttervless/xray-android/$XRAY_RUNTIME_VERSION"
 MAVEN_CENTRAL_RETRY_SECONDS="${MAVEN_CENTRAL_RETRY_SECONDS:-600}"
 TMP_DIR="$(mktemp -d)"
@@ -59,6 +60,21 @@ for entry in \
   fi
 done
 
+for entry in \
+  "jni/arm64-v8a/libxray.so" \
+  "jni/armeabi-v7a/libxray.so" \
+  "jni/x86/libxray.so" \
+  "jni/x86_64/libxray.so"; do
+  extracted="$TMP_DIR/maven-$(basename "$(dirname "$entry")")-libxray.so"
+  version_strings="$extracted.strings"
+  unzip -p "$AAR_PATH" "$entry" > "$extracted"
+  strings "$extracted" > "$version_strings"
+  if ! grep -q "v$XRAY_CORE_VERSION" "$version_strings"; then
+    echo "Maven Central AAR $entry does not report Xray v$XRAY_CORE_VERSION" >&2
+    exit 1
+  fi
+done
+
 (
   cd "$ROOT_DIR/example"
   flutter pub get
@@ -111,6 +127,20 @@ for entry in \
   "assets/geosite.dat"; do
   if ! unzip -l "$APK_PATH" "$entry" >/dev/null 2>&1; then
     echo "Debug APK is missing $entry" >&2
+    exit 1
+  fi
+done
+
+for entry in \
+  "lib/arm64-v8a/libxray.so" \
+  "lib/armeabi-v7a/libxray.so" \
+  "lib/x86_64/libxray.so"; do
+  extracted="$TMP_DIR/apk-$(basename "$(dirname "$entry")")-libxray.so"
+  version_strings="$extracted.strings"
+  unzip -p "$APK_PATH" "$entry" > "$extracted"
+  strings "$extracted" > "$version_strings"
+  if ! grep -q "v$XRAY_CORE_VERSION" "$version_strings"; then
+    echo "Debug APK $entry does not report Xray v$XRAY_CORE_VERSION" >&2
     exit 1
   fi
 done

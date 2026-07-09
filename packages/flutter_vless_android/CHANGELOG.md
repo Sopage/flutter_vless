@@ -1,6 +1,6 @@
 ## 1.1.4
 
-* Updated the Android runtime dependency to `dev.tfox.fluttervless:xray-android:26.6.27`.
+* Updated the Android runtime dependency to `dev.tfox.fluttervless:xray-android:26.6.27.1`.
 * Rebuilt Android `libxray.so` binaries for `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64` against Xray-core `v26.6.27`.
 
 ## 1.1.3

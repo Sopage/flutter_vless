@@ -1,13 +1,13 @@
 # XRay Android v26.6.27
 
-Maven runtime: `dev.tfox.fluttervless:xray-android:26.6.27`
+Maven runtime: `dev.tfox.fluttervless:xray-android:26.6.27.1`
 
 Changes:
 
 * Rebuilt `libxray.so` against XTLS/Xray-core `v26.6.27` for `arm64-v8a`, `armeabi-v7a`, `x86`, and `x86_64`.
 * Kept `libtun2socks.so` and Xray geodata packaged in the same runtime AAR.
 * Kept Android 15+ 16KB page-size linker alignment for rebuilt Android binaries.
-* Updated the Android wrapper default runtime dependency to `dev.tfox.fluttervless:xray-android:26.6.27`.
+* Updated the Android wrapper default runtime dependency to `dev.tfox.fluttervless:xray-android:26.6.27.1`.
 
 Upstream:
 

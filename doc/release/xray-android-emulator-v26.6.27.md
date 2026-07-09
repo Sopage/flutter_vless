@@ -3,7 +3,7 @@
 Changes:
 
 * Rebuilt bundled emulator `libxray.so` binaries against XTLS/Xray-core `v26.6.27` for `x86` and `x86_64`.
-* Kept this package marked as legacy because the main Maven runtime `dev.tfox.fluttervless:xray-android:26.6.27` includes emulator ABIs.
+* Kept this package marked as legacy because the main Maven runtime `dev.tfox.fluttervless:xray-android:26.6.27.1` includes emulator ABIs.
 
 Upstream:
 

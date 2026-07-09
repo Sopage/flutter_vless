@@ -4,7 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT_DIR="$ROOT_DIR/android_runtime/xray_android"
 GRADLE_WRAPPER="${GRADLE_WRAPPER:-$ROOT_DIR/example/android/gradlew}"
-XRAY_RUNTIME_VERSION="${XRAY_RUNTIME_VERSION:-26.6.27}"
+XRAY_RUNTIME_VERSION="${XRAY_RUNTIME_VERSION:-26.6.27.1}"
+XRAY_CORE_VERSION="${XRAY_CORE_VERSION:-26.6.27}"
 
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
@@ -48,6 +49,24 @@ for entry in \
   "assets/geosite.dat"; do
   if ! unzip -l "$AAR_PATH" "$entry" >/dev/null 2>&1; then
     echo "AAR is missing $entry" >&2
+    exit 1
+  fi
+done
+
+VERIFY_TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$VERIFY_TMP_DIR"' EXIT
+
+for entry in \
+  "jni/arm64-v8a/libxray.so" \
+  "jni/armeabi-v7a/libxray.so" \
+  "jni/x86/libxray.so" \
+  "jni/x86_64/libxray.so"; do
+  extracted="$VERIFY_TMP_DIR/$(basename "$(dirname "$entry")")-libxray.so"
+  version_strings="$extracted.strings"
+  unzip -p "$AAR_PATH" "$entry" > "$extracted"
+  strings "$extracted" > "$version_strings"
+  if ! grep -q "v$XRAY_CORE_VERSION" "$version_strings"; then
+    echo "AAR $entry does not report Xray v$XRAY_CORE_VERSION" >&2
     exit 1
   fi
 done
