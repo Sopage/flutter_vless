@@ -1,3 +1,11 @@
+## 1.1.4
+
+* Updated bundled and packaged Xray runtimes to upstream Xray-core `v26.6.27` for Android, iOS, and macOS.
+* Rebuilt the Android runtime AAR as `dev.tfox.fluttervless:xray-android:26.6.27` and refreshed the legacy emulator `x86` / `x86_64` `libxray.so` copies.
+* Updated the default hosted Apple runtime release tags and checksums to `xray-ios-v26.6.27` and `xray-macos-v26.6.27`.
+* Made the local iOS and macOS SwiftPM manifests prefer checked-in `XRay.xcframework` artifacts during repository builds while keeping the hosted release fallback for published consumers.
+* Refreshed release scripts, release notes, docs, package metadata, and smoke tests for the `1.1.4` release train.
+
 ## 1.1.3
 
 * Update Android native library packaging instructions

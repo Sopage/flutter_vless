@@ -32,6 +32,8 @@ pubspec_overrides.yaml
 build/
 **/.build/
 example/**/xcshareddata/swiftpm/Package.resolved
+ios/flutter_vless/XRay.xcframework
+packages/flutter_vless_macos/macos/flutter_vless_macos/XRay.xcframework
 
 ### macOS ###
 # General

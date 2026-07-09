@@ -32,8 +32,8 @@
 		C18459D12FC338110087A127 /* NetworkExtension.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C18459D02FC338100087A127 /* NetworkExtension.framework */; };
 		C18459D92FC338110087A127 /* XrayTunnel.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = C18459CF2FC338100087A127 /* XrayTunnel.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		C18459E02FC338110087A127 /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = C18459E12FC338110087A127 /* PacketTunnelProvider.swift */; };
-		F83E1445E231010AC3B3D83A /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E85E22307A5F42939BC87A87 /* Pods_RunnerTests.framework */; };
 		C4215F19475E737123EA3D41 /* flutter-vless-macos-tunnel-support in Frameworks */ = {isa = PBXBuildFile; productRef = F193D9F240A7B625B58A3FC5 /* flutter-vless-macos-tunnel-support */; };
+		F83E1445E231010AC3B3D83A /* Pods_RunnerTests.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E85E22307A5F42939BC87A87 /* Pods_RunnerTests.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -372,9 +372,9 @@
 			);
 			mainGroup = 33CC10E42044A3C60003C045;
 			packageReferences = (
-				781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage" */,
+				781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "FlutterGeneratedPluginSwiftPackage" */,
 				C10BEBDD2FC33CFE00223632 /* XCRemoteSwiftPackageReference "Tun2SocksKit" */,
-				900F113F5BF63E5C5CEBF2A3 /* XCLocalSwiftPackageReference "../../packages/flutter_vless_macos/macos/flutter_vless_macos" */,
+				900F113F5BF63E5C5CEBF2A3 /* XCLocalSwiftPackageReference "flutter_vless_macos" */,
 			);
 			productRefGroup = 33CC10EE2044A3C60003C045 /* Products */;
 			projectDirPath = "";
@@ -1111,11 +1111,11 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage" */ = {
+		781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "FlutterGeneratedPluginSwiftPackage" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage;
 		};
-		900F113F5BF63E5C5CEBF2A3 /* XCLocalSwiftPackageReference "../../packages/flutter_vless_macos/macos/flutter_vless_macos" */ = {
+		900F113F5BF63E5C5CEBF2A3 /* XCLocalSwiftPackageReference "flutter_vless_macos" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../../packages/flutter_vless_macos/macos/flutter_vless_macos;
 		};
@@ -1139,8 +1139,8 @@
 		};
 		F193D9F240A7B625B58A3FC5 /* flutter-vless-macos-tunnel-support */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 900F113F5BF63E5C5CEBF2A3 /* XCLocalSwiftPackageReference "../../packages/flutter_vless_macos/macos/flutter_vless_macos" */;
-			productName = flutter-vless-macos-tunnel-support;
+			package = 900F113F5BF63E5C5CEBF2A3 /* XCLocalSwiftPackageReference "flutter_vless_macos" */;
+			productName = "flutter-vless-macos-tunnel-support";
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

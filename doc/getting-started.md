@@ -41,7 +41,7 @@ targets, and Windows needs `xray.exe` in place. For macOS, run
 
 ```yaml
 dependencies:
-  flutter_vless: ^1.1.3
+  flutter_vless: ^1.1.4
 ```
 
 Then run:

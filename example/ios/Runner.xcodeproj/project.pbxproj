@@ -316,8 +316,8 @@
 			);
 			mainGroup = 97C146E51CF9000F007C117D;
 			packageReferences = (
-				781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage" */,
-				78F1B1012E6D000000000001 /* XCLocalSwiftPackageReference "../../ios/flutter_vless" */,
+				781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "FlutterGeneratedPluginSwiftPackage" */,
+				78F1B1012E6D000000000001 /* XCLocalSwiftPackageReference "flutter_vless" */,
 			);
 			productRefGroup = 97C146EF1CF9000F007C117D /* Products */;
 			projectDirPath = "";
@@ -580,10 +580,10 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-					DEVELOPMENT_TEAM = NY9Y536MJK;
-					GENERATE_INFOPLIST_FILE = YES;
-					IPHONEOS_DEPLOYMENT_TARGET = 15.0;
-					MARKETING_VERSION = 1.0;
+				DEVELOPMENT_TEAM = NY9Y536MJK;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.tfox.flutterXrayExample.RunnerTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
@@ -600,10 +600,10 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-					DEVELOPMENT_TEAM = NY9Y536MJK;
-					GENERATE_INFOPLIST_FILE = YES;
-					IPHONEOS_DEPLOYMENT_TARGET = 15.0;
-					MARKETING_VERSION = 1.0;
+				DEVELOPMENT_TEAM = NY9Y536MJK;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.tfox.flutterXrayExample.RunnerTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
@@ -618,10 +618,10 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-					DEVELOPMENT_TEAM = NY9Y536MJK;
-					GENERATE_INFOPLIST_FILE = YES;
-					IPHONEOS_DEPLOYMENT_TARGET = 15.0;
-					MARKETING_VERSION = 1.0;
+				DEVELOPMENT_TEAM = NY9Y536MJK;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.tfox.flutterXrayExample.RunnerTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_VERSION = 5.0;
@@ -629,10 +629,10 @@
 			};
 			name = Profile;
 		};
-			387960752CEB611D00D7FB87 /* Debug */ = {
-				isa = XCBuildConfiguration;
-				baseConfigurationReference = 9740EEB31CF90195004384FC /* Generated.xcconfig */;
-				buildSettings = {
+		387960752CEB611D00D7FB87 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 9740EEB31CF90195004384FC /* Generated.xcconfig */;
+			buildSettings = {
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
 				CLANG_ENABLE_OBJC_WEAK = YES;
@@ -641,7 +641,7 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CODE_SIGN_ENTITLEMENTS = XrayTunnel/XrayTunnel.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-					CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
+				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
 				DEVELOPMENT_TEAM = NY9Y536MJK;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -656,7 +656,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-					MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
+				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.tfox.flutterXrayExample.XrayTunnel;
@@ -670,10 +670,10 @@
 			};
 			name = Debug;
 		};
-			387960762CEB611D00D7FB87 /* Release */ = {
-				isa = XCBuildConfiguration;
-				baseConfigurationReference = 9740EEB31CF90195004384FC /* Generated.xcconfig */;
-				buildSettings = {
+		387960762CEB611D00D7FB87 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 9740EEB31CF90195004384FC /* Generated.xcconfig */;
+			buildSettings = {
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
 				CLANG_ENABLE_OBJC_WEAK = YES;
@@ -682,7 +682,7 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CODE_SIGN_ENTITLEMENTS = XrayTunnel/XrayTunnel.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-					CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
+				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
 				DEVELOPMENT_TEAM = NY9Y536MJK;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -697,7 +697,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-					MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
+				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
 				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.tfox.flutterXrayExample.XrayTunnel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -708,10 +708,10 @@
 			};
 			name = Release;
 		};
-			387960772CEB611D00D7FB87 /* Profile */ = {
-				isa = XCBuildConfiguration;
-				baseConfigurationReference = 9740EEB31CF90195004384FC /* Generated.xcconfig */;
-				buildSettings = {
+		387960772CEB611D00D7FB87 /* Profile */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 9740EEB31CF90195004384FC /* Generated.xcconfig */;
+			buildSettings = {
 				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
 				CLANG_ENABLE_OBJC_WEAK = YES;
@@ -720,7 +720,7 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CODE_SIGN_ENTITLEMENTS = XrayTunnel/XrayTunnel.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-					CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
+				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
 				DEVELOPMENT_TEAM = NY9Y536MJK;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
@@ -735,7 +735,7 @@
 					"@executable_path/../../Frameworks",
 				);
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-					MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
+				MARKETING_VERSION = "$(FLUTTER_BUILD_NAME)";
 				MTL_FAST_MATH = YES;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.tfox.flutterXrayExample.XrayTunnel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -952,11 +952,11 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage" */ = {
+		781AD8BC2B33823900A9FFBB /* XCLocalSwiftPackageReference "FlutterGeneratedPluginSwiftPackage" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Flutter/ephemeral/Packages/FlutterGeneratedPluginSwiftPackage;
 		};
-		78F1B1012E6D000000000001 /* XCLocalSwiftPackageReference "../../ios/flutter_vless" */ = {
+		78F1B1012E6D000000000001 /* XCLocalSwiftPackageReference "flutter_vless" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../../ios/flutter_vless;
 		};
@@ -969,7 +969,7 @@
 		};
 		78F1B1022E6D000000000001 /* flutter-vless-tunnel-support */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 78F1B1012E6D000000000001 /* XCLocalSwiftPackageReference "../../ios/flutter_vless" */;
+			package = 78F1B1012E6D000000000001 /* XCLocalSwiftPackageReference "flutter_vless" */;
 			productName = "flutter-vless-tunnel-support";
 		};
 /* End XCSwiftPackageProductDependency section */

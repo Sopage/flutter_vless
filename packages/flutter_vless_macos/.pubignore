@@ -4,3 +4,5 @@ macos/XRay.xcframework.zip
 macos/XRay.xcframework/
 macos/build_xray_macos/
 macos/flutter_vless_macos/.build/
+macos/flutter_vless_macos/.swiftpm/
+macos/flutter_vless_macos/XRay.xcframework/

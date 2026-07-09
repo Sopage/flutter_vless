@@ -17,7 +17,6 @@ pubspec_overrides.yaml
 
 # monorepo-only packages and apps
 apps/
-packages/
 extensions/
 native_hosts/
 android_runtime/
@@ -51,16 +50,17 @@ example/ios/build/
 example/ios/XRay.xcframework/
 
 # Android local artifacts
-android/.gradle/
-android/gradle/
-android/gradle-wrapper.jar
-android/gradlew
-android/gradlew.bat
-android/local.properties
+/android/.gradle/
+/android/gradle/
+/android/gradle-wrapper.jar
+/android/gradlew
+/android/gradlew.bat
+/android/local.properties
 
 ios/Pods/
 ios/Flutter/ephemeral/
 ios/XRay.xcframework/
+ios/flutter_vless/XRay.xcframework/
 ios/XRay.xcframework.zip
 
 # big native libs and datasets - adjust paths to your tree
@@ -70,8 +70,6 @@ ios/XRay.xcframework.zip
 # common big file types
 # **/*.so
 **/*.a
-**/*.jar
-**/*.aar
 # **/*.dat
 **/*.zip
 

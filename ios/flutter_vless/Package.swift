@@ -1,6 +1,27 @@
 // swift-tools-version: 5.9
 
 import PackageDescription
+import Foundation
+
+let xrayReleaseTag = "xray-ios-v26.6.27"
+let xrayChecksum = "c4611c9ce9d9fc44956bc96f1886396507da34fd3892b94ebe96982721575774"
+let packageDirectory = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+let xrayPackageLocalPath = "XRay.xcframework"
+let xrayRepoLocalPath = "../XRay.xcframework"
+let xrayPackageLocalAbsolutePath = packageDirectory.appendingPathComponent(xrayPackageLocalPath).path
+let xrayRepoLocalAbsolutePath = packageDirectory.appendingPathComponent(xrayRepoLocalPath).standardized.path
+let xrayEnv = ProcessInfo.processInfo.environment
+let xrayBinaryURL = xrayEnv["FLUTTER_VLESS_XRAY_URL"] ?? "https://github.com/XIIIFOX/flutter_vless/releases/download/\(xrayReleaseTag)/XRay.xcframework.zip"
+let xrayBinaryChecksum = xrayEnv["FLUTTER_VLESS_XRAY_CHECKSUM"] ?? xrayChecksum
+let xrayBinaryTarget: Target
+
+if FileManager.default.fileExists(atPath: xrayPackageLocalAbsolutePath) {
+    xrayBinaryTarget = .binaryTarget(name: "XRay", path: xrayPackageLocalPath)
+} else if FileManager.default.fileExists(atPath: xrayRepoLocalAbsolutePath) {
+    xrayBinaryTarget = .binaryTarget(name: "XRay", path: xrayRepoLocalPath)
+} else {
+    xrayBinaryTarget = .binaryTarget(name: "XRay", url: xrayBinaryURL, checksum: xrayBinaryChecksum)
+}
 
 let package = Package(
     name: "flutter_vless",
@@ -37,11 +58,7 @@ let package = Package(
                 .linkedLibrary("resolv")
             ]
         ),
-        .binaryTarget(
-            name: "XRay",
-            url: "https://github.com/XIIIFOX/flutter_vless/releases/download/xray-ios-v26.6.22/XRay.xcframework.zip",
-            checksum: "72b0a0bbbdce320a4ced885d22c118991e4cf4c50d25a8e90eb90560b3862c9a"
-        ),
+        xrayBinaryTarget,
         .testTarget(
             name: "flutter_vless_tunnel_supportTests",
             dependencies: ["flutter_vless_tunnel_support"]
