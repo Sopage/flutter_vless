@@ -125,11 +125,20 @@ class XrayVPNService : VpnService() {
                 builder.setMetered(false)
             }
             
-            try {
-                builder.addDisallowedApplication(packageName)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to exclude app from VPN", e)
-            }
+          try {
+    builder.addDisallowedApplication(packageName)
+} catch (e: Exception) {
+    Log.e(TAG, "Failed to exclude app from VPN", e)
+}
+
+for (pkg in config.BLOCKED_APPS) {
+    try {
+        builder.addDisallowedApplication(pkg)
+        Log.d(TAG, "Excluded from VPN: $pkg")
+    } catch (e: Exception) {
+        Log.e(TAG, "Failed to exclude $pkg from VPN", e)
+    }
+}
 
             // Add routes to exclude the server IP (to prevent routing loop)
             val serverIp = config.CONNECTED_V2RAY_SERVER_ADDRESS
