@@ -1854,13 +1854,46 @@ final class PacketTunnelManager: ObservableObject {
               let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupIdentifier) else {
             return nil
         }
-        let url = containerURL.appendingPathComponent("flutter_vless_tunnel_debug.log")
-        guard let data = try? Data(contentsOf: url),
-              let content = String(data: data, encoding: .utf8),
-              !content.isEmpty else {
+        let providerURL = containerURL.appendingPathComponent("flutter_vless_tunnel_debug.log")
+        let hevURL = containerURL.appendingPathComponent("hev-socks5-tunnel.log")
+        var sections: [String] = []
+        if let provider = boundedSharedLogTail(at: providerURL, maxLines: 200) {
+            sections.append(provider.content)
+        }
+        if let hev = boundedSharedLogTail(at: hevURL, maxLines: 160) {
+            sections.append("--- HEV persisted log tail bytes=\(hev.size) ---\n\(hev.content)")
+        }
+        return sections.isEmpty ? nil : sections.joined(separator: "\n")
+    }
+
+    private func boundedSharedLogTail(
+        at url: URL,
+        maxBytes: UInt64 = 64 * 1024,
+        maxLines: Int
+    ) -> (content: String, size: UInt64)? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else {
             return nil
         }
-        return content.split(separator: "\n").suffix(160).joined(separator: "\n")
+        defer { try? handle.close() }
+        do {
+            let size = try handle.seekToEnd()
+            let start = size > maxBytes ? size - maxBytes : 0
+            try handle.seek(toOffset: start)
+            var data = try handle.readToEnd() ?? Data()
+            if start > 0, let newline = data.firstIndex(of: 0x0a) {
+                data = Data(data[data.index(after: newline)...])
+            }
+            guard let content = String(data: data, encoding: .utf8) else {
+                return nil
+            }
+            let tail = content
+                .split(separator: "\n", omittingEmptySubsequences: true)
+                .suffix(maxLines)
+                .joined(separator: "\n")
+            return tail.isEmpty ? nil : (tail, size)
+        } catch {
+            return nil
+        }
     }
 
     /// Sends an internal control/debug message to the Packet Tunnel provider.

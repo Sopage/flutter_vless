@@ -11,5 +11,6 @@ void main() {
     expect(find.text('Configuration (JSON)'), findsOneWidget);
     expect(find.text('Import (clipboard)'), findsOneWidget);
     expect(find.text('VPN Mode'), findsOneWidget);
+    expect(find.text('VPN Diagnostics'), findsOneWidget);
   });
 }

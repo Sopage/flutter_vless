@@ -111,14 +111,14 @@ public enum TunnelXrayConfigPreparer {
             if var log = configJSON["log"] as? [String: Any] {
                 log["access"] = ""
                 log["error"] = ""
-                log["loglevel"] = "debug"
+                log["loglevel"] = "warning"
                 log["dnsLog"] = false
                 configJSON["log"] = log
             } else {
                 configJSON["log"] = [
                     "access": "",
                     "error": "",
-                    "loglevel": "debug",
+                    "loglevel": "warning",
                     "dnsLog": false
                 ]
             }

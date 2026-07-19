@@ -6,6 +6,7 @@
 //
 
 import NetworkExtension
+import Network
 import CXRay
 import Tun2SocksKit
 import Tun2SocksKitC
@@ -103,6 +104,9 @@ private let networkSettingsTimeoutSeconds: TimeInterval = 15
 /// with memory pressure and long-running browser traffic because extensions run
 /// with tighter lifecycle constraints than the app.
 private let hevTCPBufferSize = 4096
+private let hevStartupGraceSeconds: TimeInterval = 0.25
+private let hevShutdownTimeoutSeconds: TimeInterval = 2
+private let watchdogIntervalSeconds: TimeInterval = 60
 
 /// Small debug ring buffer shared by all provider callbacks.
 ///
@@ -120,7 +124,7 @@ private final class TunnelDebugStore {
     static let shared = TunnelDebugStore()
     private let lock = NSLock()
     private var lines: [String] = []
-    private let maxLines = 1200
+    private let maxLines = 120
     private var fileURL: URL?
 
     /// Opens the optional App Group debug file.
@@ -139,9 +143,6 @@ private final class TunnelDebugStore {
             return
         }
         fileURL = containerURL.appendingPathComponent("flutter_vless_tunnel_debug.log")
-        let existingLines = lines.joined(separator: "\n")
-        let initialContent = existingLines.isEmpty ? "" : "\(existingLines)\n"
-        try? initialContent.write(to: fileURL!, atomically: true, encoding: .utf8)
     }
 
     /// Appends one timestamped provider event to memory and the shared file.
@@ -159,20 +160,25 @@ private final class TunnelDebugStore {
             lines.removeFirst(lines.count - maxLines)
         }
         if let fileURL {
-            if let handle = try? FileHandle(forWritingTo: fileURL) {
-                defer { try? handle.close() }
-                _ = try? handle.seekToEnd()
-                if let data = "\(line)\n".data(using: .utf8) {
-                    try? handle.write(contentsOf: data)
-                }
-            }
+            try? TunnelFileLog.append(line, to: fileURL)
         }
     }
 
     func snapshot() -> String {
         lock.lock()
         defer { lock.unlock() }
+        if let fileURL,
+           let persisted = try? TunnelFileLog.tail(of: fileURL),
+           !persisted.isEmpty {
+            return persisted
+        }
         return lines.joined(separator: "\n")
+    }
+
+    func logDirectoryURL() -> URL? {
+        lock.lock()
+        defer { lock.unlock() }
+        return fileURL?.deletingLastPathComponent()
     }
 }
 
@@ -194,6 +200,25 @@ private final class SingleResumeBox: @unchecked Sendable {
 
 private func rememberTunnelLog(_ message: String) {
     TunnelDebugStore.shared.append(message)
+}
+
+private final class TerminalFailureGate {
+    private let lock = NSLock()
+    private var reported = false
+
+    func reset() {
+        lock.lock()
+        reported = false
+        lock.unlock()
+    }
+
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !reported else { return false }
+        reported = true
+        return true
+    }
 }
 
 /// Network Extension Packet Tunnel provider for macOS VPN mode.
@@ -221,8 +246,16 @@ private func rememberTunnelLog(_ message: String) {
 open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
 
     private let logger = CustomXRayLogger()
+    private let hevLifecycle = TunnelProcessLifecycle()
+    private let terminalFailureGate = TerminalFailureGate()
+    private let watchdogQueue = DispatchQueue(label: "dev.tfox.flutter-vless.macos-watchdog", qos: .utility)
     private var lastTrafficLogDate: Date = .distantPast
     private var hevLogURL: URL?
+    private var watchdogTimer: DispatchSourceTimer?
+    private var pathMonitor: NWPathMonitor?
+    private var watchdogPolicy = TunnelWatchdogFailurePolicy(failureThreshold: 3)
+    private var watchdogSuspended = false
+    private var watchdogInboundPort: Int?
 
     /// Legacy callback entrypoint used by macOS NetworkExtension.
     ///
@@ -259,8 +292,6 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
     ///    They are diagnostics only and must not block `startTunnel`, otherwise
     ///    macOS can leave the VPN profile stuck in `connecting`.
     private func startTunnelAsync(options: [String : NSObject]?) async throws {
-        rememberTunnelLog("Starting Xray packet tunnel")
-        tunnelLog.info("Starting Xray packet tunnel options=\(String(describing: options), privacy: .public)")
         guard
             let protocolConfiguration = protocolConfiguration as? NETunnelProviderProtocol,
             let providerConfiguration = protocolConfiguration.providerConfiguration
@@ -280,6 +311,9 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         let preparedXrayConfig = prepareXrayConfigForTunnel(xrayConfig) ?? xrayConfig
         let bypassSubnets = providerConfiguration["bypassSubnets"] as? [String] ?? []
         TunnelDebugStore.shared.configure(groupIdentifier: providerConfiguration["groupIdentifier"] as? String)
+        terminalFailureGate.reset()
+        rememberTunnelLog("Starting Xray packet tunnel")
+        tunnelLog.info("Starting Xray packet tunnel options=\(String(describing: options), privacy: .public)")
         tunnelLog.info("Bypass subnet count=\(bypassSubnets.count, privacy: .public)")
         if (providerConfiguration["proxyOnly"] as? Bool) == true {
             tunnelLog.warning("proxyOnly is not supported by the macOS packet tunnel; starting VPN mode")
@@ -334,10 +368,11 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         try await applyTunnelNetworkSettings(settings)
         try self.startXRay(xrayConfig: preparedXrayConfig)
         let tunnelFileDescriptor = packetFlowFileDescriptor()
-        self.startSocks5Tunnel(
+        try self.startSocks5Tunnel(
             serverPort: parsedConfig.inboundPort,
             tunnelFileDescriptor: tunnelFileDescriptor
         )
+        startTunnelWatchdog(port: parsedConfig.inboundPort)
         logServerTCPRouteHealthCheck(
             host: parsedConfig.serverAddress,
             port: parsedConfig.serverPort ?? 443
@@ -387,8 +422,15 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     private func cleanupAfterStartupFailure() {
-        stopXRay()
+        let shouldWaitForHEV = hevLifecycle.isRunning || hevLifecycle.isStopRequested
+        stopTunnelWatchdog()
+        hevLifecycle.requestStop()
         Socks5Tunnel.quit()
+        if shouldWaitForHEV,
+           !hevLifecycle.waitForExit(timeout: hevShutdownTimeoutSeconds) {
+            rememberTunnelLog("Timed out waiting for HEV after startup failure")
+        }
+        stopXRay()
         setTunnelNetworkSettings(nil) { error in
             if let error {
                 rememberTunnelLog("Clearing tunnel network settings after startup failure failed: \(error.localizedDescription)")
@@ -411,11 +453,21 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         tunnelLog.info("Stopping Xray packet tunnel, reason: \(reason.rawValue, privacy: .public)")
         logTrafficStats(context: "stop")
         if let hevTail = readHevLogTail(), !hevTail.isEmpty {
-            rememberTunnelLog("--- HEV log tail before stop ---\n\(hevTail)")
+            rememberTunnelLog("--- HEV log tail before stop bytes=\(hevLogSizeBytes()) ---\n\(hevTail)")
         }
-        stopXRay()
+        stopTunnelWatchdog()
+        hevLifecycle.requestStop()
         Socks5Tunnel.quit()
-        clearTunnelNetworkSettingsBeforeStop(completionHandler: completionHandler)
+        DispatchQueue.global(qos: .utility).async {
+            if !self.hevLifecycle.waitForExit(timeout: hevShutdownTimeoutSeconds) {
+                rememberTunnelLog("Timed out waiting for HEV to stop")
+                tunnelLog.warning("Timed out waiting for HEV to stop")
+            } else {
+                rememberTunnelLog("HEV stopped before tunnel teardown")
+            }
+            self.stopXRay()
+            self.clearTunnelNetworkSettingsBeforeStop(completionHandler: completionHandler)
+        }
     }
 
     private func clearTunnelNetworkSettingsBeforeStop(completionHandler: @escaping () -> Void) {
@@ -467,7 +519,7 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
                 // to the extension process separately.
                 var snapshot = TunnelDebugStore.shared.snapshot()
                 if let hevTail = readHevLogTail(), !hevTail.isEmpty {
-                    snapshot += "\n--- HEV log tail ---\n\(hevTail)"
+                    snapshot += "\n--- HEV log tail bytes=\(hevLogSizeBytes()) ---\n\(hevTail)"
                 }
                 completionHandler?(snapshot.data(using: .utf8))
             }else if (message.hasPrefix("xray_delay")){
@@ -495,28 +547,47 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     open override func sleep(completionHandler: @escaping () -> Void) {
+        rememberTunnelLog("Packet tunnel sleep; suspending watchdog")
         tunnelLog.info("Packet tunnel sleep")
+        watchdogQueue.async {
+            self.watchdogSuspended = true
+            self.watchdogPolicy.reset()
+        }
         completionHandler()
     }
 
     open override func wake() {
+        rememberTunnelLog("Packet tunnel wake; scheduling health check")
         tunnelLog.info("Packet tunnel wake")
+        watchdogQueue.async {
+            self.watchdogSuspended = false
+            self.watchdogPolicy.reset()
+            self.scheduleTunnelHealthCheck(trigger: "wake", after: 1.5)
+        }
     }
 
     /// Starts HEV tun2socks against the local Xray SOCKS inbound.
     ///
     /// Xray can start successfully while no browser bytes return. HEV is the
     /// bridge that decides whether utun packets actually become SOCKS sessions.
-    /// For this reason the HEV log is deliberately kept at `debug` level and
-    /// exposed in provider snapshots during the macOS stabilization period.
-    private func startSocks5Tunnel(serverPort port: Int, tunnelFileDescriptor: Int32?) {
+    /// HEV file output is intentionally limited to errors; bounded provider
+    /// snapshots retain the lifecycle evidence needed after a failure.
+    private func startSocks5Tunnel(serverPort port: Int, tunnelFileDescriptor: Int32?) throws {
         // HEV is the tun2socks bridge: it reads IP packets from NetworkExtension
         // and forwards them into the local SOCKS inbound opened by Xray.
         // Xray alone can start successfully while user traffic still cannot
         // leave the device; HEV logs close that gap during real-device tests.
-        let logURL = FileManager.default.temporaryDirectory.appendingPathComponent("hev-socks5-tunnel.log")
+        let logDirectory = TunnelDebugStore.shared.logDirectoryURL()
+            ?? FileManager.default.temporaryDirectory
+        let logURL = logDirectory.appendingPathComponent("hev-socks5-tunnel.log")
         hevLogURL = logURL
-        try? FileManager.default.removeItem(at: logURL)
+        try? TunnelFileLog.trimIfNeeded(logURL)
+        try? TunnelFileLog.append(
+            "--- HEV session started \(ISO8601DateFormatter().string(from: Date())) ---",
+            to: logURL,
+            maxFileBytes: 512 * 1024,
+            retainedBytes: 256 * 1024
+        )
         let config = """
         tunnel:
           mtu: \(tunnelMTU)
@@ -527,13 +598,15 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
         misc:
           task-stack-size: 20480
           tcp-buffer-size: \(hevTCPBufferSize)
+          max-session-count: 512
           connect-timeout: 5000
-          read-write-timeout: 60000
+          tcp-read-write-timeout: 300000
+          udp-read-write-timeout: 60000
           log-file: \(logURL.path)
-          log-level: debug
+          log-level: error
           limit-nofile: 65535
         """
-        rememberTunnelLog("HEV config summary: tunnel.mtu=\(tunnelMTU), socks5=127.0.0.1:\(port), udp=udp, tcpBuffer=\(hevTCPBufferSize), timeoutMs=5000/60000")
+        rememberTunnelLog("HEV config summary: tunnel.mtu=\(tunnelMTU), socks5=127.0.0.1:\(port), udp=udp, tcpBuffer=\(hevTCPBufferSize), timeoutMs=5000/300000/60000")
         if let tunnelFileDescriptor {
             rememberTunnelLog("Starting HEV socks5 tunnel on 127.0.0.1:\(port), fd=\(tunnelFileDescriptor), mtu=\(tunnelMTU), tcpBuffer=\(hevTCPBufferSize), log=\(logURL.path)")
             tunnelLog.info("Starting HEV socks5 tunnel on 127.0.0.1:\(port, privacy: .public), fd \(tunnelFileDescriptor, privacy: .public), mtu \(tunnelMTU, privacy: .public), tcpBuffer \(hevTCPBufferSize, privacy: .public)")
@@ -541,8 +614,10 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
             rememberTunnelLog("Starting HEV socks5 tunnel on 127.0.0.1:\(port) using Tun2SocksKit fd autodetect fallback, mtu=\(tunnelMTU), tcpBuffer=\(hevTCPBufferSize), log=\(logURL.path)")
             tunnelLog.warning("Starting HEV socks5 tunnel using fd autodetect fallback on 127.0.0.1:\(port, privacy: .public)")
         }
+        hevLifecycle.beginStart()
         DispatchQueue.global(qos: .userInitiated).async {
             tunnelLog.info("HEV socks5 tunnel thread entered")
+            self.hevLifecycle.markThreadEntered()
             let exitCode: Int32
             if let tunnelFileDescriptor {
                 rememberTunnelLog("HEV explicit-fd run begin fd=\(tunnelFileDescriptor)")
@@ -554,9 +629,27 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
             } else {
                 exitCode = Socks5Tunnel.run(withConfig: .string(content: config))
             }
+            let exitedUnexpectedly = self.hevLifecycle.markExited(code: exitCode)
             rememberTunnelLog("HEV socks5 tunnel exited with code \(exitCode)")
             tunnelLog.error("HEV socks5 tunnel exited with code \(exitCode, privacy: .public)")
             NSLog("HEV_SOCKS5_TUNNEL_MAIN: \(exitCode)")
+            if exitedUnexpectedly {
+                self.reportTerminalFailure(
+                    "HEV socks5 tunnel exited unexpectedly with code \(exitCode)",
+                    code: Int(exitCode)
+                )
+            }
+        }
+
+        switch hevLifecycle.waitForStableStartup(gracePeriod: hevStartupGraceSeconds) {
+        case .running:
+            rememberTunnelLog("HEV remained running through startup grace period")
+        case .exited(let code):
+            throw tunnelError("HEV exited during startup with code \(code)")
+        case .timedOut:
+            hevLifecycle.requestStop()
+            Socks5Tunnel.quit()
+            throw tunnelError("Timed out waiting for HEV startup")
         }
     }
 
@@ -788,6 +881,114 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
             }
         }
         return routes
+    }
+
+    private func startTunnelWatchdog(port: Int) {
+        watchdogQueue.sync {
+            watchdogInboundPort = port
+            watchdogPolicy.reset()
+            watchdogSuspended = false
+
+            watchdogTimer?.cancel()
+            let timer = DispatchSource.makeTimerSource(queue: watchdogQueue)
+            timer.schedule(
+                deadline: .now() + 2,
+                repeating: watchdogIntervalSeconds,
+                leeway: .seconds(5)
+            )
+            timer.setEventHandler { [weak self] in
+                self?.performTunnelHealthCheck(trigger: "periodic")
+            }
+            watchdogTimer = timer
+            timer.resume()
+
+            pathMonitor?.cancel()
+            let monitor = NWPathMonitor()
+            monitor.pathUpdateHandler = { [weak self] path in
+                guard let self else { return }
+                rememberTunnelLog("Network path changed status=\(String(describing: path.status))")
+                if path.status == .satisfied {
+                    self.watchdogPolicy.reset()
+                    self.scheduleTunnelHealthCheck(trigger: "path-change", after: 2)
+                }
+            }
+            pathMonitor = monitor
+            monitor.start(queue: watchdogQueue)
+        }
+    }
+
+    private func stopTunnelWatchdog() {
+        watchdogQueue.sync {
+            watchdogSuspended = true
+            watchdogPolicy.reset()
+            watchdogTimer?.cancel()
+            watchdogTimer = nil
+            pathMonitor?.cancel()
+            pathMonitor = nil
+            watchdogInboundPort = nil
+        }
+    }
+
+    /// Must be called while already executing on `watchdogQueue`.
+    private func scheduleTunnelHealthCheck(trigger: String, after delay: TimeInterval) {
+        watchdogQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.performTunnelHealthCheck(trigger: trigger)
+        }
+    }
+
+    private func performTunnelHealthCheck(trigger: String) {
+        guard !watchdogSuspended,
+              !hevLifecycle.isStopRequested,
+              hevLifecycle.isRunning,
+              let port = watchdogInboundPort else {
+            return
+        }
+
+        let inboundResult = socksInboundHealthCheck(port: port)
+        let connectResult = socksConnectHealthCheck(port: port)
+        let httpResult = socksHTTPHealthCheck(port: port)
+        if let hevLogURL {
+            try? TunnelFileLog.trimIfNeeded(hevLogURL)
+        }
+        let success = inboundResult.hasPrefix("ok")
+            && connectResult.hasPrefix("ok")
+            && httpResult.hasPrefix("ok")
+
+        rememberTunnelLog(
+            "Watchdog \(trigger): success=\(success) inbound=[\(inboundResult)] connect=[\(connectResult)] http=[\(httpResult)]"
+        )
+        if success {
+            tunnelLog.info("Tunnel watchdog \(trigger, privacy: .public) passed")
+        } else {
+            tunnelLog.warning("Tunnel watchdog \(trigger, privacy: .public) failed")
+        }
+
+        if watchdogPolicy.record(success: success) {
+            reportTerminalFailure(
+                "Tunnel watchdog failed \(watchdogPolicy.consecutiveFailures) consecutive checks",
+                code: 2
+            )
+        }
+    }
+
+    private func reportTerminalFailure(_ message: String, code: Int) {
+        guard !hevLifecycle.isStopRequested else {
+            return
+        }
+        guard terminalFailureGate.claim() else {
+            return
+        }
+
+        rememberTunnelLog("Terminal tunnel failure: \(message)")
+        tunnelLog.fault("Terminal tunnel failure: \(message, privacy: .public)")
+        hevLifecycle.requestStop()
+        Socks5Tunnel.quit()
+        let error = NSError(
+            domain: "flutter_vless.packet_tunnel",
+            code: code,
+            userInfo: [NSLocalizedDescriptionKey: message]
+        )
+        cancelTunnelWithError(error)
     }
 
     /// Runs layered startup health checks after Xray has had a moment to bind.
@@ -1243,13 +1444,29 @@ open class FlutterVlessPacketTunnelProvider: NEPacketTunnelProvider {
     /// Full HEV logs can become very large. The tail is enough to identify
     /// whether recent traffic is TCP splice, UDP churn, or session timeout.
     private func readHevLogTail() -> String? {
-        guard let hevLogURL,
-              let data = try? Data(contentsOf: hevLogURL),
-              let content = String(data: data, encoding: .utf8),
+        guard let hevLogURL else {
+            return nil
+        }
+        try? TunnelFileLog.trimIfNeeded(hevLogURL)
+        guard
+              let content = try? TunnelFileLog.tail(
+                of: hevLogURL,
+                maxBytes: 64 * 1024,
+                maxLines: 160
+              ),
               !content.isEmpty else {
             return nil
         }
-        return content.split(separator: "\n").suffix(160).joined(separator: "\n")
+        return content
+    }
+
+    private func hevLogSizeBytes() -> UInt64 {
+        guard let hevLogURL,
+              let attributes = try? FileManager.default.attributesOfItem(atPath: hevLogURL.path),
+              let size = attributes[.size] as? NSNumber else {
+            return 0
+        }
+        return size.uint64Value
     }
 
     /// Kept for the future dual-stack path. It is intentionally unused while

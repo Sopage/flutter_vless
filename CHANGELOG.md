@@ -1,3 +1,12 @@
+## 1.1.5
+
+* Updated iOS and macOS Packet Tunnel support to Tun2SocksKit `5.15.0` / HEV `2.15.0`.
+* Hardened long-running VPN sessions: the Packet Tunnel now detects unexpected HEV exits and repeated SOCKS/HTTP health-check failures, records the cause, and terminates the stale system VPN state instead of leaving a false connected status.
+* Added periodic and post-wake/network-change tunnel health checks, orderly HEV shutdown handling, bounded App Group diagnostics, and error-level log rotation to avoid unbounded extension I/O and memory growth.
+* Added the iOS/macOS example **VPN Diagnostics** action, including persisted provider/HEV log tails after the extension has stopped.
+* Fixed first-run iOS builds from Xcode by using CocoaPods for the main Flutter plugin when Flutter's generated Swift package is pinned to iOS 13 despite the example's iOS 15 deployment target.
+* Kept normal iOS/macOS Xcode launches on `lib/main.dart` even after an integration-test build, and removed test-profile autoloading from the example UI.
+
 ## 1.1.4
 
 * Updated bundled and packaged Xray runtimes to upstream Xray-core `v26.6.27` for Android, iOS, and macOS.

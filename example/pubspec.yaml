@@ -60,6 +60,13 @@ dependency_overrides:
 # The following section is specific to Flutter packages.
 flutter:
 
+  # Flutter 3.44's generated iOS plugin package is fixed at iOS 13 even when
+  # the Xcode project requires iOS 15. Keep the main plugin on CocoaPods,
+  # whose podspec declares iOS 15, so opening and running the example in
+  # Xcode resolves dependencies on the first build.
+  config:
+    enable-swift-package-manager: false
+
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
   # the material Icons class.

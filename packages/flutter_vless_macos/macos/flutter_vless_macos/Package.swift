@@ -33,7 +33,7 @@ let package = Package(
         .library(name: "flutter-vless-macos-tunnel-support", targets: ["flutter_vless_macos_tunnel_support"])
     ],
     dependencies: [
-        .package(url: "https://github.com/EbrahimTahernejad/Tun2SocksKit", exact: "4.11.0")
+        .package(url: "https://github.com/EbrahimTahernejad/Tun2SocksKit", exact: "5.15.0")
     ],
     targets: [
         .target(
@@ -62,6 +62,10 @@ let package = Package(
             name: "CXRay",
             dependencies: ["XRay"],
             publicHeadersPath: "include"
+        ),
+        .testTarget(
+            name: "flutter_vless_macos_tunnel_supportTests",
+            dependencies: ["flutter_vless_macos_tunnel_support"]
         ),
         xrayBinaryTarget
     ]

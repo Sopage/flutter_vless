@@ -1,5 +1,4 @@
-import 'dart:convert';
-import 'dart:io';
+import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -18,7 +17,7 @@ class MyApp extends StatelessWidget {
     final base = ThemeData.dark();
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Flutter Vless — Example',
+      title: 'Flutter VLESS',
       theme: base.copyWith(
         colorScheme: base.colorScheme.copyWith(
           primary: Colors.orangeAccent,
@@ -61,34 +60,6 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
-    final testConfigB64 =
-        const String.fromEnvironment('FLUTTER_VLESS_TEST_CONFIG_B64');
-    if (testConfigB64.isNotEmpty) {
-      try {
-        config.text = utf8.decode(base64Decode(testConfigB64));
-      } on FormatException {
-        config.text = testConfigB64;
-      }
-      remark = const String.fromEnvironment(
-        'FLUTTER_VLESS_TEST_REMARK',
-        defaultValue: 'Android test profile',
-      );
-    }
-    final testConfigPath = const String.fromEnvironment(
-      'FLUTTER_VLESS_TEST_CONFIG_PATH',
-      defaultValue:
-          '/data/data/com.example.flutter_vless_example/files/flutter_vless_test_config.json',
-    );
-    try {
-      final testConfigFile = File(testConfigPath);
-      if (testConfigFile.existsSync()) {
-        config.text = testConfigFile.readAsStringSync();
-        remark = 'Android test profile';
-      }
-    } on FileSystemException {
-      // Optional local smoke-test hook; ignore when the file is absent or
-      // unreadable on non-Android platforms.
-    }
 
     // Plugin initialization
     flutterVless
@@ -140,6 +111,69 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _disconnect() async {
     await flutterVless.stopVless();
+  }
+
+  Future<void> _showProviderDiagnostics() async {
+    const channel = MethodChannel('flutter_vless');
+    try {
+      final snapshot = await channel.invokeMethod<String>(
+            'getProviderDebugSnapshot',
+          ) ??
+          '';
+      if (!mounted) return;
+
+      final content = snapshot.trim().isEmpty
+          ? 'No provider diagnostics have been recorded yet. Connect the VPN first, then retry after a failure.'
+          : snapshot;
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('VPN diagnostics'),
+          content: SizedBox(
+            width: double.maxFinite,
+            height: 420,
+            child: Scrollbar(
+              thumbVisibility: true,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.only(right: 12),
+                child: SelectableText(
+                  content,
+                  style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Close'),
+            ),
+            ElevatedButton.icon(
+              onPressed: snapshot.trim().isEmpty
+                  ? null
+                  : () async {
+                      await Clipboard.setData(ClipboardData(text: snapshot));
+                      if (!dialogContext.mounted || !mounted) return;
+                      Navigator.of(dialogContext).pop();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('VPN diagnostics copied')),
+                      );
+                    },
+              icon: const Icon(Icons.copy),
+              label: const Text('Copy'),
+            ),
+          ],
+        ),
+      );
+    } on PlatformException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Diagnostics unavailable: ${error.message}')),
+      );
+    }
   }
 
   Future<void> _importFromClipboard() async {
@@ -442,6 +476,12 @@ class _HomePageState extends State<HomePage> {
               icon: const Icon(Icons.timer),
               label: const Text('Delay'),
             ),
+            if (Platform.isIOS || Platform.isMacOS)
+              ElevatedButton.icon(
+                onPressed: _showProviderDiagnostics,
+                icon: const Icon(Icons.bug_report_outlined),
+                label: const Text('VPN Diagnostics'),
+              ),
           ],
         ),
       ),

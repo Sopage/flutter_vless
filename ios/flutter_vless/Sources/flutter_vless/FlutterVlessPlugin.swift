@@ -430,7 +430,12 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         Task {
             do {
                 guard let response = try await self.packetTunnelManager?.sendProviderMessage(data: "xray_debug".data(using: .utf8)!) else {
-                    pluginLog.warning("Provider debug snapshot unavailable")
+                    let persisted = self.packetTunnelManager?.sharedProviderDebugSnapshot() ?? ""
+                    if persisted.isEmpty {
+                        pluginLog.warning("Provider debug snapshot unavailable")
+                    } else {
+                        pluginLog.info("Provider persisted debug snapshot:\n\(persisted, privacy: .public)")
+                    }
                     return
                 }
                 let snapshot = String(decoding: response, as: UTF8.self)
@@ -439,6 +444,10 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
                 }
             } catch {
                 pluginLog.error("Provider debug snapshot failed: \(error.localizedDescription, privacy: .public)")
+                let persisted = self.packetTunnelManager?.sharedProviderDebugSnapshot() ?? ""
+                if !persisted.isEmpty {
+                    pluginLog.info("Provider persisted debug snapshot:\n\(persisted, privacy: .public)")
+                }
             }
         }
     }
@@ -507,13 +516,18 @@ public class FlutterVlessPlugin: NSObject, FlutterPlugin, FlutterStreamHandler {
         Task {
             do {
                 guard let response = try await packetTunnelManager?.sendProviderMessage(data: "xray_debug".data(using: .utf8)!) else {
-                    result("")
+                    result(packetTunnelManager?.sharedProviderDebugSnapshot() ?? "")
                     return
                 }
                 result(String(decoding: response, as: UTF8.self))
             } catch {
                 pluginLog.error("Provider debug snapshot request failed: \(error.localizedDescription, privacy: .public)")
-                result(FlutterError(code: "PROVIDER_DEBUG_FAILED", message: error.localizedDescription, details: nil))
+                let persisted = packetTunnelManager?.sharedProviderDebugSnapshot() ?? ""
+                if persisted.isEmpty {
+                    result(FlutterError(code: "PROVIDER_DEBUG_FAILED", message: error.localizedDescription, details: nil))
+                } else {
+                    result(persisted)
+                }
             }
         }
     }
@@ -737,7 +751,8 @@ final class PacketTunnelManager: ObservableObject {
                 configuration.providerConfiguration = [
                     "xrayConfig": self.xrayConfig,
                     "bypassSubnets": self.bypassSubnets,
-                    "proxyOnly": self.proxyOnly
+                    "proxyOnly": self.proxyOnly,
+                    "groupIdentifier": self.groupIdentifier ?? ""
                 ]
                 if #available(iOS 14.2, *) {
                     configuration.excludeLocalNetworks = true
@@ -828,6 +843,57 @@ final class PacketTunnelManager: ObservableObject {
         } catch {
             pluginLog.error("Error during save and load test: \(error.localizedDescription, privacy: .public)")
             return false
+        }
+    }
+
+    func sharedProviderDebugSnapshot() -> String {
+        guard let groupIdentifier,
+              !groupIdentifier.isEmpty,
+              let containerURL = FileManager.default.containerURL(
+                forSecurityApplicationGroupIdentifier: groupIdentifier
+              ) else {
+            return ""
+        }
+        let providerURL = containerURL.appendingPathComponent("flutter_vless_tunnel_debug.log")
+        let hevURL = containerURL.appendingPathComponent("hev-socks5-tunnel.log")
+        var sections: [String] = []
+
+        if let provider = boundedFileTail(at: providerURL, maxLines: 200) {
+            sections.append(provider.content)
+        }
+        if let hev = boundedFileTail(at: hevURL, maxLines: 80) {
+            sections.append("--- HEV persisted log tail bytes=\(hev.size) ---\n\(hev.content)")
+        }
+        return sections.joined(separator: "\n")
+    }
+
+    private func boundedFileTail(
+        at url: URL,
+        maxBytes: UInt64 = 64 * 1024,
+        maxLines: Int
+    ) -> (content: String, size: UInt64)? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else {
+            return nil
+        }
+        defer { try? handle.close() }
+        do {
+            let size = try handle.seekToEnd()
+            let start = size > maxBytes ? size - maxBytes : 0
+            try handle.seek(toOffset: start)
+            var data = try handle.readToEnd() ?? Data()
+            if start > 0, let newline = data.firstIndex(of: 0x0a) {
+                data = Data(data[data.index(after: newline)...])
+            }
+            guard let content = String(data: data, encoding: .utf8) else {
+                return nil
+            }
+            let tail = content
+                .split(separator: "\n", omittingEmptySubsequences: true)
+                .suffix(maxLines)
+                .joined(separator: "\n")
+            return tail.isEmpty ? nil : (tail, size)
+        } catch {
+            return nil
         }
     }
 

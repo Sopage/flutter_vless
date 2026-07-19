@@ -6,6 +6,7 @@
 //
 
 import NetworkExtension
+import Network
 import XRay
 import Tun2SocksKit
 import flutter_vless_tunnel_support
@@ -18,6 +19,9 @@ private let tunnelLog = Logger(
 )
 private let tunnelMTU = 1500
 private let dnsServers = ["1.1.1.1", "8.8.8.8"]
+private let hevStartupGraceSeconds: TimeInterval = 0.25
+private let hevShutdownTimeoutSeconds: TimeInterval = 2
+private let watchdogIntervalSeconds: TimeInterval = 60
 
 /// iOS runs this extension in a separate process from the Flutter app, and the
 /// Runner console does not reliably show extension stdout. Keeping a small
@@ -28,21 +32,51 @@ private final class TunnelDebugStore {
     private let lock = NSLock()
     private var lines: [String] = []
     private let maxLines = 120
+    private var fileURL: URL?
+
+    func configure(groupIdentifier: String?) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let groupIdentifier,
+              !groupIdentifier.isEmpty,
+              let containerURL = FileManager.default.containerURL(
+                forSecurityApplicationGroupIdentifier: groupIdentifier
+              ) else {
+            fileURL = nil
+            return
+        }
+        fileURL = containerURL.appendingPathComponent("flutter_vless_tunnel_debug.log")
+    }
 
     func append(_ message: String) {
         lock.lock()
         defer { lock.unlock() }
         let timestamp = ISO8601DateFormatter().string(from: Date())
-        lines.append("\(timestamp) \(message)")
+        let line = "\(timestamp) \(message)"
+        lines.append(line)
         if lines.count > maxLines {
             lines.removeFirst(lines.count - maxLines)
+        }
+        if let fileURL {
+            try? TunnelFileLog.append(line, to: fileURL)
         }
     }
 
     func snapshot() -> String {
         lock.lock()
         defer { lock.unlock() }
+        if let fileURL,
+           let persisted = try? TunnelFileLog.tail(of: fileURL),
+           !persisted.isEmpty {
+            return persisted
+        }
         return lines.joined(separator: "\n")
+    }
+
+    func logDirectoryURL() -> URL? {
+        lock.lock()
+        defer { lock.unlock() }
+        return fileURL?.deletingLastPathComponent()
     }
 }
 
@@ -50,21 +84,52 @@ private func rememberTunnelLog(_ message: String) {
     TunnelDebugStore.shared.append(message)
 }
 
+private final class TerminalFailureGate {
+    private let lock = NSLock()
+    private var reported = false
+
+    func reset() {
+        lock.lock()
+        reported = false
+        lock.unlock()
+    }
+
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !reported else { return false }
+        reported = true
+        return true
+    }
+}
+
 class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private let logger = CustomXRayLogger()
+    private let hevLifecycle = TunnelProcessLifecycle()
+    private let terminalFailureGate = TerminalFailureGate()
+    private let watchdogQueue = DispatchQueue(label: "dev.tfox.flutter-vless.ios-watchdog", qos: .utility)
     private var lastTrafficLogDate: Date = .distantPast
     private var hevLogURL: URL?
+    private var watchdogTimer: DispatchSourceTimer?
+    private var pathMonitor: NWPathMonitor?
+    private var watchdogPolicy = TunnelWatchdogFailurePolicy(failureThreshold: 3)
+    private var watchdogSuspended = false
+    private var watchdogInboundPort: Int?
 
     override func startTunnel(options: [String : NSObject]? = nil) async throws {
-        rememberTunnelLog("Starting Xray packet tunnel")
-        tunnelLog.info("Starting Xray packet tunnel options=\(String(describing: options), privacy: .public)")
         guard
             let protocolConfiguration = protocolConfiguration as? NETunnelProviderProtocol,
             let providerConfiguration = protocolConfiguration.providerConfiguration
         else {
             throw tunnelError("Missing tunnel provider configuration")
         }
+        TunnelDebugStore.shared.configure(
+            groupIdentifier: providerConfiguration["groupIdentifier"] as? String
+        )
+        terminalFailureGate.reset()
+        rememberTunnelLog("Starting Xray packet tunnel")
+        tunnelLog.info("Starting Xray packet tunnel options=\(String(describing: options), privacy: .public)")
         tunnelLog.info("Provider configuration keys: \(providerConfiguration.keys.sorted().joined(separator: ","), privacy: .public)")
         guard let xrayConfig: Data = providerConfiguration["xrayConfig"] as? Data else {
             throw tunnelError("Missing Xray config")
@@ -116,17 +181,42 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         try await self.setTunnelNetworkSettings(settings)
         tunnelLog.info("Tunnel network settings applied")
         try self.startXRay(xrayConfig: preparedXrayConfig)
-        logSocksInboundHealthCheck(port: parsedConfig.inboundPort)
-        self.startSocks5Tunnel(serverPort: parsedConfig.inboundPort)
+        do {
+            try self.startSocks5Tunnel(serverPort: parsedConfig.inboundPort)
+        } catch {
+            let shouldWaitForHEV = hevLifecycle.isRunning || hevLifecycle.isStopRequested
+            hevLifecycle.requestStop()
+            Socks5Tunnel.quit()
+            if shouldWaitForHEV,
+               !hevLifecycle.waitForExit(timeout: hevShutdownTimeoutSeconds) {
+                rememberTunnelLog("Timed out waiting for HEV after startup failure")
+            }
+            stopXRay()
+            throw error
+        }
+        startTunnelWatchdog(port: parsedConfig.inboundPort)
 
     }
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
+        rememberTunnelLog("Stopping Xray packet tunnel, reason=\(reason.rawValue)")
         tunnelLog.info("Stopping Xray packet tunnel, reason: \(reason.rawValue, privacy: .public)")
         logTrafficStats(context: "stop")
-        stopXRay()
+        if let hevTail = readHevLogTail(), !hevTail.isEmpty {
+            rememberTunnelLog("--- HEV log tail before stop bytes=\(hevLogSizeBytes()) ---\n\(hevTail)")
+        }
+        stopTunnelWatchdog()
+        hevLifecycle.requestStop()
         Socks5Tunnel.quit()
-
-        completionHandler()
+        DispatchQueue.global(qos: .utility).async {
+            if !self.hevLifecycle.waitForExit(timeout: hevShutdownTimeoutSeconds) {
+                rememberTunnelLog("Timed out waiting for HEV to stop")
+                tunnelLog.warning("Timed out waiting for HEV to stop")
+            } else {
+                rememberTunnelLog("HEV stopped before tunnel teardown")
+            }
+            self.stopXRay()
+            completionHandler()
+        }
     }
 
     override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
@@ -142,7 +232,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 // to the extension process separately.
                 var snapshot = TunnelDebugStore.shared.snapshot()
                 if let hevTail = readHevLogTail(), !hevTail.isEmpty {
-                    snapshot += "\n--- HEV log tail ---\n\(hevTail)"
+                    snapshot += "\n--- HEV log tail bytes=\(hevLogSizeBytes()) ---\n\(hevTail)"
                 }
                 completionHandler?(snapshot.data(using: .utf8))
             }else if (message.hasPrefix("xray_delay")){
@@ -170,22 +260,41 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     override func sleep(completionHandler: @escaping () -> Void) {
+        rememberTunnelLog("Packet tunnel sleep; suspending watchdog")
         tunnelLog.info("Packet tunnel sleep")
+        watchdogQueue.async {
+            self.watchdogSuspended = true
+            self.watchdogPolicy.reset()
+        }
         completionHandler()
     }
 
     override func wake() {
+        rememberTunnelLog("Packet tunnel wake; scheduling health check")
         tunnelLog.info("Packet tunnel wake")
+        watchdogQueue.async {
+            self.watchdogSuspended = false
+            self.watchdogPolicy.reset()
+            self.scheduleTunnelHealthCheck(trigger: "wake", after: 1.5)
+        }
     }
 
-    private func startSocks5Tunnel(serverPort port: Int) {
+    private func startSocks5Tunnel(serverPort port: Int) throws {
         // HEV is the tun2socks bridge: it reads IP packets from NetworkExtension
         // and forwards them into the local SOCKS inbound opened by Xray.
         // Xray alone can start successfully while user traffic still cannot
         // leave the device; HEV logs close that gap during real-device tests.
-        let logURL = FileManager.default.temporaryDirectory.appendingPathComponent("hev-socks5-tunnel.log")
+        let logDirectory = TunnelDebugStore.shared.logDirectoryURL()
+            ?? FileManager.default.temporaryDirectory
+        let logURL = logDirectory.appendingPathComponent("hev-socks5-tunnel.log")
         hevLogURL = logURL
-        try? FileManager.default.removeItem(at: logURL)
+        try? TunnelFileLog.trimIfNeeded(logURL)
+        try? TunnelFileLog.append(
+            "--- HEV session started \(ISO8601DateFormatter().string(from: Date())) ---",
+            to: logURL,
+            maxFileBytes: 512 * 1024,
+            retainedBytes: 256 * 1024
+        )
         let config = """
         tunnel:
           mtu: \(tunnelMTU)
@@ -194,26 +303,50 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
           address: 127.0.0.1
           udp: 'udp'
         misc:
-          task-stack-size: 20480
+          task-stack-size: 86016
+          tcp-buffer-size: 65536
+          max-session-count: 512
           connect-timeout: 5000
-          read-write-timeout: 60000
+          tcp-read-write-timeout: 300000
+          udp-read-write-timeout: 60000
           log-file: \(logURL.path)
-          log-level: debug
+          log-level: error
           limit-nofile: 65535
         """
         rememberTunnelLog("Starting HEV socks5 tunnel on 127.0.0.1:\(port), log=\(logURL.path)")
         tunnelLog.info("Starting HEV socks5 tunnel on 127.0.0.1:\(port, privacy: .public), mtu \(tunnelMTU, privacy: .public)")
+        hevLifecycle.beginStart()
         DispatchQueue.global(qos: .userInitiated).async {
             tunnelLog.info("HEV socks5 tunnel thread entered")
+            self.hevLifecycle.markThreadEntered()
             let exitCode = Socks5Tunnel.run(withConfig: .string(content: config))
+            let exitedUnexpectedly = self.hevLifecycle.markExited(code: exitCode)
             rememberTunnelLog("HEV socks5 tunnel exited with code \(exitCode)")
             tunnelLog.error("HEV socks5 tunnel exited with code \(exitCode, privacy: .public)")
             NSLog("HEV_SOCKS5_TUNNEL_MAIN: \(exitCode)")
+            if exitedUnexpectedly {
+                self.reportTerminalFailure(
+                    "HEV socks5 tunnel exited unexpectedly with code \(exitCode)",
+                    code: Int(exitCode)
+                )
+            }
+        }
+
+        switch hevLifecycle.waitForStableStartup(gracePeriod: hevStartupGraceSeconds) {
+        case .running:
+            rememberTunnelLog("HEV remained running through startup grace period")
+        case .exited(let code):
+            throw tunnelError("HEV exited during startup with code \(code)")
+        case .timedOut:
+            hevLifecycle.requestStop()
+            Socks5Tunnel.quit()
+            throw tunnelError("Timed out waiting for HEV startup")
         }
     }
 
     private func startXRay(xrayConfig: Data) throws {
-        // TODO: Set memory limit
+        // This limits the Go runtime only. HEV session caps and bounded Swift/C
+        // diagnostics below protect the rest of the extension memory budget.
         XRaySetMemoryLimit()
 
         // Create an error pointer
@@ -307,23 +440,115 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         return routes
     }
 
-    private func logSocksInboundHealthCheck(port: Int) {
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) {
-            // The three checks separate local startup from real Internet reach:
-            // 1. SOCKS inbound: Xray opened the local port.
-            // 2. CONNECT: Xray accepted an outbound request.
-            // 3. HTTP 204: bytes came back from the public Internet.
-            // TCP/Reality is treated as working only after the third line is ok.
-            let result = self.socksInboundHealthCheck(port: port)
-            rememberTunnelLog("SOCKS inbound health check: \(result)")
-            tunnelLog.info("SOCKS inbound health check: \(result, privacy: .public)")
-            let connectResult = self.socksConnectHealthCheck(port: port)
-            rememberTunnelLog("SOCKS CONNECT health check: \(connectResult)")
-            tunnelLog.info("SOCKS CONNECT health check: \(connectResult, privacy: .public)")
-            let httpResult = self.socksHTTPHealthCheck(port: port)
-            rememberTunnelLog("SOCKS HTTP health check: \(httpResult)")
-            tunnelLog.info("SOCKS HTTP health check: \(httpResult, privacy: .public)")
+    private func startTunnelWatchdog(port: Int) {
+        watchdogQueue.sync {
+            watchdogInboundPort = port
+            watchdogPolicy.reset()
+            watchdogSuspended = false
+
+            watchdogTimer?.cancel()
+            let timer = DispatchSource.makeTimerSource(queue: watchdogQueue)
+            timer.schedule(
+                deadline: .now() + 2,
+                repeating: watchdogIntervalSeconds,
+                leeway: .seconds(5)
+            )
+            timer.setEventHandler { [weak self] in
+                self?.performTunnelHealthCheck(trigger: "periodic")
+            }
+            watchdogTimer = timer
+            timer.resume()
+
+            pathMonitor?.cancel()
+            let monitor = NWPathMonitor()
+            monitor.pathUpdateHandler = { [weak self] path in
+                guard let self else { return }
+                rememberTunnelLog("Network path changed status=\(String(describing: path.status))")
+                if path.status == .satisfied {
+                    self.watchdogPolicy.reset()
+                    self.scheduleTunnelHealthCheck(trigger: "path-change", after: 2)
+                }
+            }
+            pathMonitor = monitor
+            monitor.start(queue: watchdogQueue)
         }
+    }
+
+    private func stopTunnelWatchdog() {
+        watchdogQueue.sync {
+            watchdogSuspended = true
+            watchdogPolicy.reset()
+            watchdogTimer?.cancel()
+            watchdogTimer = nil
+            pathMonitor?.cancel()
+            pathMonitor = nil
+            watchdogInboundPort = nil
+        }
+    }
+
+    /// Must be called while already executing on `watchdogQueue`.
+    private func scheduleTunnelHealthCheck(trigger: String, after delay: TimeInterval) {
+        watchdogQueue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            self?.performTunnelHealthCheck(trigger: trigger)
+        }
+    }
+
+    /// Checks both the HEV worker state and the Xray SOCKS-to-Internet path.
+    /// Three consecutive failures terminate the system VPN state instead of
+    /// leaving a false "connected" session with no packet consumer.
+    private func performTunnelHealthCheck(trigger: String) {
+        guard !watchdogSuspended,
+              !hevLifecycle.isStopRequested,
+              hevLifecycle.isRunning,
+              let port = watchdogInboundPort else {
+            return
+        }
+
+        let inboundResult = socksInboundHealthCheck(port: port)
+        let connectResult = socksConnectHealthCheck(port: port)
+        let httpResult = socksHTTPHealthCheck(port: port)
+        if let hevLogURL {
+            try? TunnelFileLog.trimIfNeeded(hevLogURL)
+        }
+        let success = inboundResult.hasPrefix("ok")
+            && connectResult.hasPrefix("ok")
+            && httpResult.hasPrefix("ok")
+
+        rememberTunnelLog(
+            "Watchdog \(trigger): success=\(success) inbound=[\(inboundResult)] connect=[\(connectResult)] http=[\(httpResult)]"
+        )
+        if success {
+            tunnelLog.info("Tunnel watchdog \(trigger, privacy: .public) passed")
+        } else {
+            tunnelLog.warning("Tunnel watchdog \(trigger, privacy: .public) failed")
+        }
+
+        if watchdogPolicy.record(success: success) {
+            reportTerminalFailure(
+                "Tunnel watchdog failed \(watchdogPolicy.consecutiveFailures) consecutive checks",
+                code: 2
+            )
+        }
+    }
+
+    private func reportTerminalFailure(_ message: String, code: Int) {
+        guard !hevLifecycle.isStopRequested else {
+            return
+        }
+        guard terminalFailureGate.claim() else {
+            return
+        }
+
+        rememberTunnelLog("Terminal tunnel failure: \(message)")
+        tunnelLog.fault("Terminal tunnel failure: \(message, privacy: .public)")
+        hevLifecycle.requestStop()
+        Socks5Tunnel.quit()
+        let error = NSError(
+            domain: "flutter_vless.packet_tunnel",
+            code: code,
+            userInfo: [NSLocalizedDescriptionKey: message]
+        )
+        cancelTunnelWithError(error)
     }
 
     private func socksInboundHealthCheck(port: Int) -> String {
@@ -589,13 +814,29 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     private func readHevLogTail() -> String? {
-        guard let hevLogURL,
-              let data = try? Data(contentsOf: hevLogURL),
-              let content = String(data: data, encoding: .utf8),
+        guard let hevLogURL else {
+            return nil
+        }
+        try? TunnelFileLog.trimIfNeeded(hevLogURL)
+        guard
+              let content = try? TunnelFileLog.tail(
+                of: hevLogURL,
+                maxBytes: 64 * 1024,
+                maxLines: 80
+              ),
               !content.isEmpty else {
             return nil
         }
-        return content.split(separator: "\n").suffix(40).joined(separator: "\n")
+        return content
+    }
+
+    private func hevLogSizeBytes() -> UInt64 {
+        guard let hevLogURL,
+              let attributes = try? FileManager.default.attributesOfItem(atPath: hevLogURL.path),
+              let size = attributes[.size] as? NSNumber else {
+            return 0
+        }
+        return size.uint64Value
     }
 
     /// Kept for the future dual-stack path. It is intentionally unused while
