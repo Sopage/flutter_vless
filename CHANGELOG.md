@@ -5,7 +5,7 @@
 * Added periodic and post-wake/network-change tunnel health checks, orderly HEV shutdown handling, bounded App Group diagnostics, and error-level log rotation to avoid unbounded extension I/O and memory growth.
 * Added the iOS/macOS example **VPN Diagnostics** action, including persisted provider/HEV log tails after the extension has stopped.
 * Fixed first-run iOS builds from Xcode by using CocoaPods for the main Flutter plugin when Flutter's generated Swift package is pinned to iOS 13 despite the example's iOS 15 deployment target.
-* Kept normal iOS/macOS Xcode launches on `lib/main.dart` even after an integration-test build, and removed test-profile autoloading from the example UI.
+* Fixed Android VPN app routing: every configured blocked app is now added to `VpnService.Builder` as a disallowed application, so it correctly bypasses the Xray VPN tunnel. Thanks by [AbdulManan](https://github.com/AbdulManan-official) PR #18
 
 ## 1.1.4
 

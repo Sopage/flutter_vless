@@ -1,3 +1,7 @@
+## 1.1.5
+
+* Fixed Android VPN app routing: all configured blocked apps are now applied to `VpnService.Builder` as disallowed applications and bypass the Xray VPN tunnel.
+
 ## 1.1.4
 
 * Updated the Android runtime dependency to `dev.tfox.fluttervless:xray-android:26.6.27.1`.
